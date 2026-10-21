@@ -27,7 +27,7 @@ Levanta todo (PostgreSQL, Redis, la app, el worker de Sidekiq y la recuperación
 docker compose up --build
 ```
 
-- La app queda en http://localhost:3000 (API, tiendas simuladas y, más adelante, el dashboard).
+- La app queda en http://localhost:3000: el dashboard de órdenes en `/`, la API en `/api/v1`, las tiendas simuladas en `/simulated_stores` y Sidekiq en `/sidekiq`.
 - Orden de arranque: `setup` prepara la base y carga las seeds; recién después arranca `web`, y `sidekiq` y `dispatch_recovery` esperan a que `web` responda. Así el primer inicio funciona desde cero y el worker nunca entrega órdenes a tiendas que todavía no escuchan.
 - `web`, `sidekiq` y `dispatch_recovery` se reinician solos si se caen; por ejemplo, Sidekiq termina si arranca sin Redis disponible.
 - Docker usa su propia base (`niufoods_orders_docker`) y su propia base de Redis (`/1`), separadas de las de la ejecución local, para que los workers de un entorno nunca tomen jobs del otro.

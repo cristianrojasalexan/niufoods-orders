@@ -60,3 +60,5 @@ group :test do
   # Stub outgoing HTTP calls (e.g. dispatches to stores) [https://github.com/bblimke/webmock]
   gem "webmock", "~> 3.34"
 end
+
+gem "pagy", "~> 43.8"

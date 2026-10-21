@@ -20,10 +20,10 @@ class OrderSerializer
       dispatch: {
         status: order.dispatch_status,
         attempts: order.dispatch_attempts_count,
-        dispatched_at: order.dispatched_at&.iso8601,
+        dispatched_at: order.dispatched_at&.utc&.iso8601,
         last_error: order.last_dispatch_error
       },
-      created_at: order.created_at.iso8601
+      created_at: order.created_at.utc.iso8601
     }
   end
 

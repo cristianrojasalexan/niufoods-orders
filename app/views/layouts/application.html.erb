@@ -1,7 +1,7 @@
 <!DOCTYPE html>
-<html>
+<html lang="es">
   <head>
-    <title><%= content_for(:title) || "Niufoods Orders" %></title>
+    <title><%= content_for(:title) || "Niufoods · Órdenes" %></title>
     <meta name="viewport" content="width=device-width,initial-scale=1">
     <meta name="application-name" content="Niufoods Orders">
     <meta name="apple-mobile-web-app-capable" content="yes">
@@ -23,8 +23,21 @@
     <%= javascript_importmap_tags %>
   </head>
 
-  <body>
-    <main class="container mx-auto mt-28 px-5 flex">
+  <body class="min-h-screen bg-slate-50 text-slate-900 antialiased">
+    <header class="border-b border-slate-200 bg-white">
+      <div class="mx-auto flex max-w-7xl items-center justify-between px-4 py-4 sm:px-6">
+        <%= link_to root_path, class: "flex items-center gap-2" do %>
+          <span class="flex h-8 w-8 items-center justify-center rounded-lg bg-rose-500 text-sm font-bold text-white">N</span>
+          <span class="text-lg font-semibold tracking-tight">Niufoods <span class="font-normal text-slate-500">· Órdenes</span></span>
+        <% end %>
+        <nav class="flex items-center gap-4 text-sm text-slate-600">
+          <%= link_to "Órdenes", root_path, class: "hover:text-slate-900" %>
+          <%= link_to "Sidekiq", "/sidekiq", class: "hover:text-slate-900" if Rails.env.development? %>
+        </nav>
+      </div>
+    </header>
+
+    <main class="mx-auto max-w-7xl px-4 py-8 sm:px-6">
       <%= yield %>
     </main>
   </body>

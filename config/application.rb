@@ -33,7 +33,8 @@ module NiufoodsOrders
     # These settings can be overridden in specific environments using the files
     # in config/environments, which are processed later.
     #
-    # config.time_zone = "Central Time (US & Canada)"
+    # Times are stored in UTC and shown in the time zone of the restaurants.
+    config.time_zone = "America/Santiago"
     # config.eager_load_paths << Rails.root.join("extras")
 
     # Don't generate system test files.
