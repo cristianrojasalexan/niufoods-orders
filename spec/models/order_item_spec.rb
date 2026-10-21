@@ -30,6 +30,13 @@ RSpec.describe OrderItem, type: :model do
       expect(item.subtotal).to eq(11_970)
     end
 
+    it "always takes the catalog price for a new item, ignoring an assigned one" do
+      item = build(:order_item, product: product, quantity: 2, unit_price: 1)
+      item.validate
+
+      expect(item).to have_attributes(unit_price: 3990, subtotal: 7980)
+    end
+
     it "does not take a new catalog price after creation" do
       item = create(:order_item, product: product, quantity: 1)
       product.update!(price: 4990)
@@ -37,6 +44,44 @@ RSpec.describe OrderItem, type: :model do
       item.update!(quantity: 2)
 
       expect(item.reload).to have_attributes(unit_price: 3990, subtotal: 7980)
+    end
+  end
+
+  describe "order total" do
+    let(:order) { create(:order) }
+    let(:item) { order.order_items.first }
+
+    def subtotals_sum
+      order.order_items.sum(:subtotal)
+    end
+
+    it "is updated when an item is changed on its own" do
+      item.update!(quantity: 2)
+
+      expect(order.reload.total_amount).to eq(2 * item.unit_price)
+      expect(order.total_amount).to eq(subtotals_sum)
+    end
+
+    it "is updated when an item is added to an existing order" do
+      create(:order_item, order: order, quantity: 3)
+
+      expect(order.reload.total_amount).to eq(subtotals_sum)
+      expect(order.order_items.count).to eq(2)
+    end
+
+    it "cannot be changed once its order was deleted" do
+      stale_item = OrderItem.find(item.id)
+      order.destroy!
+
+      expect { stale_item.update!(quantity: 2) }.to raise_error(ActiveRecord::RecordNotFound, /no longer exists/)
+    end
+
+    it "is updated when an item is removed" do
+      extra = create(:order_item, order: order, quantity: 1)
+
+      extra.destroy!
+
+      expect(order.reload.total_amount).to eq(item.subtotal)
     end
   end
 

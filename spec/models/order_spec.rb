@@ -94,6 +94,29 @@ RSpec.describe Order, type: :model do
       expect(order.total_amount).to eq(22_470)
     end
 
+    it "uses the catalog price even if the item was built with another one" do
+      order = build(:order).tap { |o| o.order_items.clear }
+      order.order_items.build(product: roll, quantity: 2, unit_price: 1)
+      order.save!
+
+      expect(order.reload.total_amount).to eq(17_980)
+      expect(order.order_items.first.unit_price).to eq(8990)
+    end
+
+    it "saves changed items together with the order and keeps the total consistent" do
+      order = build_order
+      order.save!
+
+      reloaded = Order.includes(:order_items).find(order.id)
+      reloaded.order_items.find { |item| item.product == roll }.quantity = 3
+      reloaded.save!
+      reloaded.reload
+
+      expect(reloaded.order_items.find_by(product: roll).quantity).to eq(3)
+      expect(reloaded.total_amount).to eq(3 * 8990 + 4490)
+      expect(reloaded.total_amount).to eq(reloaded.order_items.sum(:subtotal))
+    end
+
     it "keeps the prices of the moment the order was created" do
       order = build_order
       order.save!

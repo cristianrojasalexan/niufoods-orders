@@ -3,7 +3,7 @@ class Order < ApplicationRecord
   PHONE_FORMAT = /\A\+?\d{8,15}\z/
 
   belongs_to :restaurant
-  has_many :order_items, dependent: :destroy, inverse_of: :order
+  has_many :order_items, dependent: :destroy, inverse_of: :order, autosave: true
   has_many :products, through: :order_items
 
   enum :order_type, { pickup: "pickup", delivery: "delivery" }, validate: true
@@ -20,6 +20,15 @@ class Order < ApplicationRecord
 
   before_validation :calculate_total_amount
   before_create :assign_number
+  # Prepended so it runs before the dependent: :destroy cascade: the order is
+  # locked before its items, the same order item changes follow.
+  before_destroy :lock_row, prepend: true
+
+  # Recalculates the total from the subtotals stored in the database. Items
+  # call it after locking the order row, within the same transaction.
+  def refresh_total_amount!
+    update_column(:total_amount, order_items.sum(:subtotal))
+  end
 
   private
 
@@ -38,6 +47,10 @@ class Order < ApplicationRecord
   def assign_number
     self.id ||= self.class.connection.select_value("SELECT nextval(pg_get_serial_sequence('orders', 'id'))")
     self.number ||= format(NUMBER_FORMAT, code: restaurant.code, id: id)
+  end
+
+  def lock_row
+    self.class.where(id: id).lock.pluck(:id)
   end
 
   def live_items
