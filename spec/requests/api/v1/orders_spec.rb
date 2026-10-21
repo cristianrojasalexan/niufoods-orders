@@ -129,6 +129,47 @@ RSpec.describe "API v1 orders", type: :request do
     end
   end
 
+  describe "POST /api/v1/orders with an Idempotency-Key" do
+    def post_with_key(key, body = payload)
+      post api_v1_orders_path, params: body, as: :json, headers: { "Idempotency-Key" => key }
+    end
+
+    it "returns 201 the first time and 200 with the same order on a retry" do
+      post_with_key("order-123")
+      first = json
+
+      expect { post_with_key("order-123") }.not_to change(Order, :count)
+
+      expect(response).to have_http_status(:ok)
+      expect(response.headers["Idempotent-Replayed"]).to eq("true")
+      expect(response.location).to eq(api_v1_order_url(first["id"]))
+      expect(json).to eq(first)
+    end
+
+    it "returns 409 when the key is reused with a different request" do
+      post_with_key("order-123")
+      post_with_key("order-123", payload.merge(order_type: "pickup"))
+
+      expect(response).to have_http_status(:conflict)
+      expect(json["errors"]).to contain_exactly(include("field" => nil, "code" => "idempotency_conflict"))
+    end
+
+    it "does not mark first responses as replayed" do
+      post_with_key("order-123")
+
+      expect(response.headers).not_to have_key("Idempotent-Replayed")
+    end
+
+    [ "", "with spaces", "x" * 256, "ñandú" ].each do |key|
+      it "returns 400 for the malformed key #{key.truncate(20).inspect}" do
+        expect { post_with_key(key) }.not_to change(Order, :count)
+
+        expect(response).to have_http_status(:bad_request)
+        expect(json["errors"]).to contain_exactly(include("field" => "Idempotency-Key", "code" => "invalid_idempotency_key"))
+      end
+    end
+  end
+
   describe "GET /api/v1/orders/:id" do
     it "returns the order" do
       post_order

@@ -119,8 +119,8 @@ erDiagram
         string customer_phone
         string delivery_address "obligatoria si es delivery"
         integer total_amount "calculado en el servidor"
-        string idempotency_key UK "opcional"
-        string request_fingerprint
+        string idempotency_key UK "opcional, único si existe"
+        string request_fingerprint "SHA-256 de la solicitud canónica"
         string dispatch_status "pending | dispatching | dispatched | failed"
         integer dispatch_cycle
         integer dispatch_attempts_count

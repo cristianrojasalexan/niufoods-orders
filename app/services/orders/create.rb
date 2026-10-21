@@ -1,9 +1,10 @@
 module Orders
   # Creates an order from the payload of POST /api/v1/orders.
   #
-  #   result = Orders::Create.call(payload)
-  #   result.success? # => true
-  #   result.order    # => persisted Order
+  #   result = Orders::Create.call(payload, idempotency_key: "8f14e45f")
+  #   result.status   # => :created, :replayed, :conflict or :invalid
+  #   result.success? # => true when created or replayed
+  #   result.order    # => the order, new or the one stored for the key
   #   result.errors   # => [] or [FieldError(field:, code:, message:)]
   #
   # The payload keeps the shape of the API contract (customer nested, items
@@ -11,11 +12,17 @@ module Orders
   # before any conversion, consolidates repeated products, prices the items
   # from the catalog and saves the order with its items in one transaction.
   # A total sent by the client is only compared with the calculated one.
+  #
+  # With an Idempotency-Key, a retry of the same request returns the order
+  # created the first time, exactly as it was stored: prices or a total that
+  # changed since then are not checked again. The same key with a different
+  # request is a conflict. A request rejected as invalid does not reserve
+  # its key.
   class Create
     FieldError = Data.define(:field, :code, :message)
 
-    Result = Data.define(:order, :errors) do
-      def success? = errors.empty?
+    Result = Data.define(:status, :order, :errors) do
+      def success? = %i[created replayed].include?(status)
     end
 
     # Model attributes reported with the names of the API contract.
@@ -29,12 +36,13 @@ module Orders
       "order_items.product" => "items"
     }.freeze
 
-    def self.call(payload)
-      new(payload).call
+    def self.call(payload, idempotency_key: nil)
+      new(payload, idempotency_key: idempotency_key).call
     end
 
-    def initialize(payload)
+    def initialize(payload, idempotency_key: nil)
       @payload = payload.to_h.deep_stringify_keys
+      @idempotency_key = idempotency_key
     end
 
     def call
@@ -42,25 +50,59 @@ module Orders
       return failure(errors) if errors.any?
 
       items = consolidated_items
+      fingerprint = RequestFingerprint.call(payload, items)
+      existing = previous_order
+      return replay_or_conflict(existing, fingerprint) if existing
+
+      create(items, fingerprint)
+    end
+
+    private
+
+    attr_reader :payload, :idempotency_key
+
+    def create(items, fingerprint)
       restaurant = Restaurant.find_by(id: payload["restaurant_id"])
       products = Product.where(id: items.keys).index_by(&:id)
       errors = reference_errors(restaurant, items, products)
       return failure(errors) if errors.any?
 
       order = build_order(restaurant, items, products)
+      order.assign_attributes(idempotency_key: idempotency_key, request_fingerprint: (fingerprint if idempotency_key))
       return failure(model_errors(order)) unless order.valid?
       return failure([ total_mismatch_error(order) ]) if total_mismatch?(order)
 
-      order.save!
-      Result.new(order: order, errors: [])
+      save(order, fingerprint)
     end
 
-    private
+    # A savepoint keeps an enclosing transaction usable if the insert loses
+    # the race for the key.
+    def save(order, fingerprint)
+      Order.transaction(requires_new: true) { order.save! }
+      Result.new(status: :created, order: order, errors: [])
+    rescue ActiveRecord::RecordNotUnique => e
+      raise unless idempotency_key && (winner = previous_order)
 
-    attr_reader :payload
+      Rails.logger.info("Idempotency-Key #{idempotency_key} was taken by a concurrent request (#{e.class})")
+      replay_or_conflict(winner, fingerprint)
+    end
+
+    def previous_order
+      Order.find_by(idempotency_key: idempotency_key) if idempotency_key
+    end
+
+    def replay_or_conflict(order, fingerprint)
+      if order.request_fingerprint == fingerprint
+        Result.new(status: :replayed, order: order, errors: [])
+      else
+        Result.new(status: :conflict, order: nil, errors: [
+          error(nil, :idempotency_conflict, "the Idempotency-Key was already used with a different request")
+        ])
+      end
+    end
 
     def failure(errors)
-      Result.new(order: nil, errors: errors)
+      Result.new(status: :invalid, order: nil, errors: errors)
     end
 
     def error(field, code, message)

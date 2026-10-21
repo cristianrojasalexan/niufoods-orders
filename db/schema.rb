@@ -10,7 +10,7 @@
 #
 # It's strongly recommended that you check this file into your version control system.
 
-ActiveRecord::Schema[8.0].define(version: 2026_10_21_153511) do
+ActiveRecord::Schema[8.0].define(version: 2026_10_21_172853) do
   # These are extensions that must be enabled in order to support this database
   enable_extension "pg_catalog.plpgsql"
 
@@ -39,9 +39,13 @@ ActiveRecord::Schema[8.0].define(version: 2026_10_21_153511) do
     t.integer "total_amount", null: false
     t.datetime "created_at", null: false
     t.datetime "updated_at", null: false
+    t.string "idempotency_key"
+    t.string "request_fingerprint"
     t.index ["created_at"], name: "index_orders_on_created_at"
+    t.index ["idempotency_key"], name: "index_orders_on_idempotency_key", unique: true, where: "(idempotency_key IS NOT NULL)"
     t.index ["number"], name: "index_orders_on_number", unique: true
     t.index ["restaurant_id"], name: "index_orders_on_restaurant_id"
+    t.check_constraint "idempotency_key IS NULL OR request_fingerprint IS NOT NULL", name: "orders_idempotency_key_has_fingerprint"
     t.check_constraint "order_type::text <> 'delivery'::text OR delivery_address IS NOT NULL", name: "orders_delivery_requires_address"
     t.check_constraint "order_type::text = ANY (ARRAY['pickup'::character varying, 'delivery'::character varying]::text[])", name: "orders_order_type_valid"
     t.check_constraint "total_amount >= 0", name: "orders_total_amount_non_negative"

@@ -16,6 +16,7 @@ class Order < ApplicationRecord
   validates :delivery_address, presence: true, if: :delivery?
   validates :order_items, length: { minimum: 1, message: :no_items }
   validates :total_amount, numericality: { only_integer: true, greater_than_or_equal_to: 0 }
+  validates :idempotency_key, length: { maximum: 255 }, allow_nil: true
   validate :products_appear_once
 
   before_validation :calculate_total_amount

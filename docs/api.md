@@ -3,6 +3,7 @@
 API JSON para recibir órdenes desde los canales digitales y consultar su estado.
 
 - [Crear una orden](#crear-una-orden) · `POST /api/v1/orders`
+- [Reintentos seguros con `Idempotency-Key`](#reintentos-seguros-con-idempotency-key)
 - [Consultar una orden](#consultar-una-orden) · `GET /api/v1/orders/:id`
 - [Errores](#errores)
 
@@ -89,6 +90,37 @@ curl -i -X POST http://localhost:3000/api/v1/orders \
   -d '{"restaurant_id":2,"order_type":"delivery","customer":{"name":"Ana Pérez","phone":"+56912345678"},"delivery_address":"Av. Providencia 1234, Santiago","items":[{"product_id":1,"quantity":2},{"product_id":5,"quantity":1}]}'
 ```
 
+## Reintentos seguros con `Idempotency-Key`
+
+Si el canal no recibe la respuesta, por ejemplo por un timeout, no sabe si la orden se creó. Para reintentar sin duplicarla, puede enviar el header opcional `Idempotency-Key` con un valor único por orden, como un UUID:
+
+```bash
+curl -i -X POST http://localhost:3000/api/v1/orders \
+  -H 'Content-Type: application/json' \
+  -H 'Idempotency-Key: 7d0c7f0e-5d0b-4b8a-9a43-2f7c1c1e9b11' \
+  -d '{"restaurant_id":2,"order_type":"pickup","customer":{"name":"Ana Pérez","phone":"+56912345678"},"items":[{"product_id":1,"quantity":2}]}'
+```
+
+| Situación | Respuesta |
+|---|---|
+| Primera vez con esa clave | `201 Created` con la orden nueva. |
+| Misma clave y misma solicitud | `200 OK` con **la misma orden**, más el header `Idempotent-Replayed: true`. No se crea nada. |
+| Misma clave y otra solicitud | `409 Conflict` con `idempotency_conflict`. |
+| Clave vacía, con espacios, de más de 255 caracteres o no ASCII | `400 Bad Request` con `invalid_idempotency_key`. |
+| Sin header | Cada solicitud crea una orden nueva. |
+
+**Qué se considera "la misma solicitud".** Se compara una huella SHA-256 de la forma canónica de la orden. No se compara el texto del JSON, así que estas variantes cuentan como la misma solicitud:
+- los ítems en otro orden, o un producto repartido en varias líneas (`1×2` es lo mismo que `1×1 + 1×1`);
+- espacios alrededor de los textos, o el teléfono escrito con espacios o guiones;
+- una dirección enviada en una orden `pickup`, que de todas formas no se guarda;
+- `total_amount`, que se valida contra los precios al **crear** la orden y se **ignora** en los reintentos.
+
+**Garantías:**
+- **Un reintento devuelve la orden tal como quedó guardada.** No se vuelven a validar precios ni el total, así que un reintento legítimo sigue respondiendo `200` aunque el catálogo haya cambiado.
+- **Una solicitud rechazada (4xx) no reserva la clave.** El cliente puede corregir la solicitud y enviarla con la misma clave.
+- **Solicitudes simultáneas con la misma clave crean una sola orden.** Lo decide un índice único en la base de datos: la solicitud que pierde la carrera responde como reintento (`200`) o como conflicto (`409`).
+- La clave es única en todo el sistema: la API no tiene autenticación, así que no hay un cliente al cual asociarla.
+
 ## Consultar una orden
 
 ```
@@ -121,9 +153,10 @@ Todos los errores tienen la misma forma, así que el cliente maneja un solo form
 | Status | Cuándo |
 |---|---|
 | `201 Created` | La orden se creó. |
-| `200 OK` | Consulta de una orden. |
-| `400 Bad Request` | El body no se puede procesar: JSON inválido, vacío o que no es un objeto. |
+| `200 OK` | Consulta de una orden, o reintento con la misma `Idempotency-Key` y la misma solicitud. |
+| `400 Bad Request` | El body no se puede procesar (JSON inválido, vacío o que no es un objeto) o la `Idempotency-Key` está mal formada. |
 | `404 Not Found` | La orden consultada no existe. |
+| `409 Conflict` | La `Idempotency-Key` ya se usó con otra solicitud. |
 | `422 Unprocessable Content` | El JSON es válido, pero la orden no cumple las reglas. |
 
 ### Códigos de error
@@ -133,7 +166,9 @@ Todos los errores tienen la misma forma, así que el cliente maneja un solo form
 | `malformed_json` | 400 | El body no es JSON válido. |
 | `missing_payload` | 400 | El body está vacío o no trae la orden. |
 | `invalid_payload` | 400 | La raíz de la orden no es un objeto JSON. |
+| `invalid_idempotency_key` | 400 | El header `Idempotency-Key` está vacío o no tiene entre 1 y 255 caracteres ASCII imprimibles. |
 | `not_found` | 404 | La orden consultada no existe. |
+| `idempotency_conflict` | 409 | La `Idempotency-Key` ya se usó con una solicitud distinta. |
 | `blank` | 422 | Falta un campo obligatorio. |
 | `invalid_type` | 422 | El campo tiene un tipo distinto al del contrato (por ejemplo, un string donde va un entero). |
 | `invalid_quantity` | 422 | La cantidad no es un entero entre 1 y 99, o un producto suma más de 99 unidades. |

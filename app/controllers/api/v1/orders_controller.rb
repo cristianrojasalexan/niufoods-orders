@@ -4,18 +4,29 @@ module Api
       ORDER_ATTRIBUTES = %i[restaurant_id order_type delivery_address total_amount].freeze
       CUSTOMER_ATTRIBUTES = %i[name phone].freeze
       ITEM_ATTRIBUTES = %i[product_id quantity].freeze
+      # Printable ASCII, as clients usually send a UUID or a similar token.
+      IDEMPOTENCY_KEY_FORMAT = /\A[\x21-\x7E]{1,255}\z/
 
       # The contract sends a flat JSON object; wrapping it under "order" lets
       # strong params require it. customer and items are not Order columns,
       # so they are listed explicitly.
       wrap_parameters :order, include: [ *ORDER_ATTRIBUTES, :customer, :items ], format: :json
 
-      def create
-        result = Orders::Create.call(order_payload)
+      before_action :reject_malformed_idempotency_key, only: :create
 
-        if result.success?
+      def create
+        result = Orders::Create.call(order_payload, idempotency_key: idempotency_key)
+
+        case result.status
+        when :created
           render json: OrderSerializer.new(result.order).as_json,
                  status: :created, location: api_v1_order_url(result.order)
+        when :replayed
+          response.set_header("Idempotent-Replayed", "true")
+          render json: OrderSerializer.new(result.order).as_json,
+                 status: :ok, location: api_v1_order_url(result.order)
+        when :conflict
+          render_errors(:conflict, result.errors)
         else
           render_errors(:unprocessable_content, result.errors)
         end
@@ -28,6 +39,21 @@ module Api
       end
 
       private
+
+      def idempotency_key
+        request.headers["Idempotency-Key"]
+      end
+
+      # The header is optional, but when present it must be 1 to 255
+      # printable characters. An empty or malformed key is rejected rather
+      # than ignored: the client expects the request to be protected against
+      # duplicates.
+      def reject_malformed_idempotency_key
+        return if idempotency_key.nil? || idempotency_key.match?(IDEMPOTENCY_KEY_FORMAT)
+
+        render_error(:bad_request, field: "Idempotency-Key", code: "invalid_idempotency_key",
+                                   message: "must be 1 to 255 printable ASCII characters")
+      end
 
       # Strong params drop values whose shape does not match silently: an
       # item sent as 17 or a total sent as [1] would vanish and the order
