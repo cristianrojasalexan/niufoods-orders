@@ -91,6 +91,85 @@ RSpec.describe Orders::Dispatcher do
     end
   end
 
+  describe "a transient failure" do
+    let(:base) { Rails.configuration.x.dispatch.retry_base_seconds }
+
+    it "puts the order back to pending with the time of its next attempt" do
+      stub_store(status: 503)
+
+      expect(dispatch).to eq(:transient)
+
+      order.reload
+      expect(order).to have_attributes(dispatch_status: "pending", dispatch_token: nil,
+                                       dispatch_lease_expires_at: nil, last_dispatch_error: "store answered 503")
+      expect(order.next_dispatch_at).to be_within(2.seconds).of(base.seconds.from_now)
+    end
+
+    it "schedules the next attempt for that time" do
+      stub_store(status: 503)
+      dispatch
+
+      job = DispatchOrderJob.jobs.sole
+      expect(job["args"]).to eq([ order.id ])
+      expect(Time.at(job["at"])).to be_within(2.seconds).of(base.seconds.from_now)
+    end
+
+    it "waits longer after each failed attempt" do
+      stub_store(status: 503)
+      order.update_columns(dispatch_attempts_count: 2)
+
+      dispatch
+
+      expect(order.reload.next_dispatch_at).to be_within(2.seconds).of((4 * base).seconds.from_now)
+    end
+
+    it "waits what the store asks for with Retry-After" do
+      stub_store(status: 429, headers: { "Retry-After" => "120" })
+      dispatch
+
+      expect(order.reload.next_dispatch_at).to be_within(2.seconds).of(120.seconds.from_now)
+    end
+
+    it "marks the order as failed after the last attempt of the cycle" do
+      stub_store(status: 503)
+      order.update_columns(dispatch_attempts_count: max_attempts - 1)
+
+      dispatch
+
+      expect(order.reload).to have_attributes(
+        dispatch_status: "failed", dispatch_attempts_count: max_attempts,
+        last_dispatch_error: "store answered 503 (gave up after #{max_attempts} attempts)"
+      )
+      expect(DispatchOrderJob.jobs).to be_empty
+    end
+
+    it "is not retried when the failure is permanent" do
+      stub_store(status: 422)
+      dispatch
+
+      expect(order.reload).to be_dispatch_failed
+      expect(DispatchOrderJob.jobs).to be_empty
+    end
+
+    it "is not retried by a worker that lost its lease" do
+      stub_request(:post, restaurant.dispatch_url).to_return do
+        order.update_columns(dispatch_token: SecureRandom.uuid, dispatch_lease_expires_at: 1.minute.from_now)
+        { status: 503 }
+      end
+
+      expect(dispatch).to eq(:stale)
+      expect(DispatchOrderJob.jobs).to be_empty
+    end
+
+    it "keeps the order pending for the recovery when the retry cannot be scheduled" do
+      stub_store(status: 503)
+      allow(DispatchOrderJob).to receive(:perform_in).and_raise(RedisClient::CannotConnectError)
+
+      expect(dispatch).to eq(:transient)
+      expect(order.reload).to be_dispatch_pending
+    end
+  end
+
   describe "claim" do
     before { stub_store(status: 201) }
 

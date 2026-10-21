@@ -11,6 +11,16 @@ RSpec.describe "Order dispatch to the simulated store", type: :request do
   # Route the dispatch to the app itself instead of the network.
   before { stub_request(:post, restaurant.dispatch_url).to_rack(Rails.application) }
 
+  # Retries are due at once, so draining the queue runs them right away.
+  around do |example|
+    settings = Rails.configuration.x.dispatch
+    original = settings.retry_base_seconds
+    settings.retry_base_seconds = 0
+    example.run
+  ensure
+    settings.retry_base_seconds = original
+  end
+
   def create_order
     post api_v1_orders_path, as: :json, params: {
       restaurant_id: 2, order_type: "pickup",
@@ -40,6 +50,40 @@ RSpec.describe "Order dispatch to the simulated store", type: :request do
 
     expect(response.parsed_body["dispatch"]).to include("status" => "dispatched", "attempts" => 1,
                                                         "dispatched_at" => be_present, "last_error" => nil)
+  end
+
+  it "retries a store that fails twice and then accepts the order" do
+    StoreSimulator::Mode.change!("LCON", "flaky:2")
+    order = create_order
+
+    DispatchOrderJob.drain
+
+    expect(order.reload).to have_attributes(dispatch_status: "dispatched", dispatch_attempts_count: 3)
+    expect(order.dispatch_attempts.pluck(:attempt_number, :outcome))
+      .to eq([ [ 1, "transient" ], [ 2, "transient" ], [ 3, "success" ] ])
+    expect(StoreSimulator::Request.sole).to have_attributes(attempts: 3, received_at: be_present)
+  end
+
+  it "gives up after the attempts of the cycle when the store is down" do
+    StoreSimulator::Mode.change!("LCON", "down")
+    order = create_order
+
+    DispatchOrderJob.drain
+
+    expect(order.reload).to have_attributes(dispatch_status: "failed", dispatch_attempts_count: 5)
+    expect(order.last_dispatch_error).to eq("store answered 503 (gave up after 5 attempts)")
+    expect(order.dispatch_attempts.pluck(:outcome)).to eq(Array.new(5, "transient"))
+  end
+
+  it "shares the attempts of a cycle among duplicated jobs" do
+    StoreSimulator::Mode.change!("LCON", "down")
+    order = create_order
+    3.times { DispatchOrderJob.perform_async(order.id) }
+
+    DispatchOrderJob.drain
+
+    expect(order.reload.dispatch_attempts_count).to eq(5)
+    expect(StoreSimulator::Request.sole.attempts).to eq(5)
   end
 
   it "marks the order as failed when the store rejects it" do

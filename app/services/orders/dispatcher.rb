@@ -11,11 +11,14 @@ module Orders
   #    that lost its lease cannot overwrite the result of the one that took
   #    over; its attempt is recorded as stale.
   #
-  # Every attempt is recorded in dispatch_attempts.
+  # A transient failure puts the order back to pending with the time of its
+  # next attempt, while the cycle has attempts left, and schedules the job for
+  # then. A permanent failure, or the last attempt of the cycle, marks it as
+  # failed. Every attempt is recorded in dispatch_attempts.
   class Dispatcher
     # What the claim assigned to this worker, read in the same statement.
     Claim = Data.define(:token, :cycle, :attempt_number)
-    Delivery = Data.define(:outcome, :http_status, :error_message, :duration_ms)
+    Delivery = Data.define(:outcome, :http_status, :error_message, :duration_ms, :retry_after)
 
     # Takes a due order with attempts left, or one whose lease expired. The
     # attempt number comes back with RETURNING: reading it afterwards could
@@ -44,6 +47,7 @@ module Orders
     def initialize(order_id, settings: Rails.configuration.x.dispatch)
       @order_id = order_id
       @settings = settings
+      @retry_policy = DispatchRetryPolicy.from_settings(settings)
     end
 
     # Returns the outcome of the attempt (:success, :transient, :permanent or
@@ -58,7 +62,7 @@ module Orders
 
     private
 
-    attr_reader :order_id, :settings
+    attr_reader :order_id, :settings, :retry_policy
 
     def claim_order
       token = SecureRandom.uuid
@@ -77,10 +81,11 @@ module Orders
       end
       outcome = classify(response.status)
       Delivery.new(outcome: outcome, http_status: response.status, duration_ms: elapsed_ms(started_at),
-                   error_message: ("store answered #{response.status}" unless outcome == :success))
+                   error_message: ("store answered #{response.status}" unless outcome == :success),
+                   retry_after: response.headers["Retry-After"])
     rescue Faraday::TimeoutError, Faraday::ConnectionFailed, Faraday::SSLError => e
       Delivery.new(outcome: :transient, http_status: nil, duration_ms: elapsed_ms(started_at),
-                   error_message: "#{e.class.name.demodulize}: #{e.message}".truncate(255))
+                   error_message: "#{e.class.name.demodulize}: #{e.message}".truncate(255), retry_after: nil)
     end
 
     def classify(status)
@@ -91,20 +96,53 @@ module Orders
     end
 
     def finish(order, claim, delivery)
+      retry_in = retry_delay(claim, delivery)
       Order.transaction do
-        applied = Order.where(id: order.id, dispatch_token: claim.token).update_all(result_columns(delivery)) == 1
+        applied = Order.where(id: order.id, dispatch_token: claim.token)
+                       .update_all(result_columns(claim, delivery, retry_in)) == 1
         outcome = applied ? delivery.outcome : :stale
         record_attempt(order, claim, delivery, outcome)
+        schedule_retry(order, retry_in) if applied && retry_in
         outcome
       end
     end
 
-    def result_columns(delivery)
+    # Seconds until the next attempt, or nil when the order must not be
+    # retried: success, a permanent failure or the last attempt of the cycle.
+    def retry_delay(claim, delivery)
+      return unless delivery.outcome == :transient
+      return if claim.attempt_number >= settings.max_attempts_per_cycle
+
+      retry_policy.delay_for(claim.attempt_number, retry_after: delivery.retry_after)
+    end
+
+    def result_columns(claim, delivery, retry_in)
       columns = { dispatch_token: nil, dispatch_lease_expires_at: nil, updated_at: Time.current }
       if delivery.outcome == :success
         columns.merge(dispatch_status: "dispatched", dispatched_at: Time.current, last_dispatch_error: nil)
+      elsif retry_in
+        # The database clock, the same one the claim compares against.
+        columns.merge(dispatch_status: "pending", last_dispatch_error: delivery.error_message,
+                      next_dispatch_at: Arel.sql(Order.sanitize_sql_array([ "now() + make_interval(secs => ?)", retry_in ])))
       else
-        columns.merge(dispatch_status: "failed", last_dispatch_error: delivery.error_message)
+        columns.merge(dispatch_status: "failed", last_dispatch_error: failure_message(claim, delivery))
+      end
+    end
+
+    def failure_message(claim, delivery)
+      return delivery.error_message unless delivery.outcome == :transient
+
+      "#{delivery.error_message} (gave up after #{claim.attempt_number} attempts)"
+    end
+
+    # Scheduled once the new state is committed. If Redis is not available the
+    # order is still pending and due later, so the dispatch recovery retries it.
+    def schedule_retry(order, retry_in)
+      ActiveRecord.after_all_transactions_commit do
+        DispatchOrderJob.perform_in(retry_in, order.id)
+      rescue RedisClient::Error => e
+        Rails.logger.warn("Retry of order #{order.number} not scheduled (#{e.class}: #{e.message}); " \
+                          "it stays pending for the dispatch recovery")
       end
     end
 

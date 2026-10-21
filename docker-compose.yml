@@ -29,6 +29,10 @@ x-app: &app
     # Dispatch settings (see docs/dispatch.md); set them in .env to change them.
     MAX_ATTEMPTS_PER_CYCLE: ${MAX_ATTEMPTS_PER_CYCLE:-5}
     DISPATCH_LEASE_SECONDS: ${DISPATCH_LEASE_SECONDS:-60}
+    # 2 s instead of the default 10 s, so retries can be watched live: a
+    # store that is down exhausts its 5 attempts in about 30 s.
+    DISPATCH_RETRY_BASE_SECONDS: ${DISPATCH_RETRY_BASE_SECONDS:-2}
+    DISPATCH_RETRY_MAX_SECONDS: ${DISPATCH_RETRY_MAX_SECONDS:-300}
 
 services:
   db:

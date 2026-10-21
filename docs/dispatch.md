@@ -15,13 +15,14 @@ stateDiagram-v2
     [*] --> pending: orden creada
     pending --> dispatching: claim
     dispatching --> dispatched: 2xx
-    dispatching --> failed: error
+    dispatching --> pending: transitorio<br/>y quedan intentos
+    dispatching --> failed: permanente<br/>o último intento
     dispatched --> [*]
 ```
 
 | Estado | Significado |
 |---|---|
-| `pending` | Esperando un intento de despacho. |
+| `pending` | Esperando un intento de despacho, el primero o un reintento programado para `next_dispatch_at`. |
 | `dispatching` | Un worker la tiene tomada y la está enviando. Si la lease vence, otro worker puede retomarla sin salir de este estado. |
 | `dispatched` | La tienda la recibió (`dispatched_at`). |
 | `failed` | No se pudo entregar; `last_dispatch_error` indica el motivo. |
@@ -81,7 +82,30 @@ El job se encola **después del commit** de la orden, para que el worker nunca b
 | `408`, `425`, `429`, `5xx`, timeout, conexión rechazada | `transient`: la tienda podría aceptarla más tarde. |
 | Cualquier otro `4xx` (y `3xx`) | `permanent`: reintentar no cambiaría la respuesta. |
 
-> Por ahora, tanto los errores `transient` como los `permanent` dejan la orden como `failed`. Los reintentos de los errores transitorios se agregan en el siguiente paso de la implementación.
+## Reintentos
+
+Un error `transient` vuelve la orden a `pending` y guarda **en PostgreSQL** cuándo corresponde el próximo intento (`next_dispatch_at`). Después programa el job para ese momento con `perform_in`. Un error `permanent` deja la orden `failed` sin reintentar.
+
+**Intentos por ciclo.** Cada ciclo de despacho admite `MAX_ATTEMPTS_PER_CYCLE` intentos **en total** (5 por defecto): el primero más 4 reintentos. El contador está en la orden, no en el job, así que lo comparten todos los jobs: un job duplicado, o uno encolado por la recuperación, no suma intentos extra, porque el claim exige `dispatch_attempts_count < 5`. Si el último intento también falla, la orden queda `failed` con un mensaje como `store answered 503 (gave up after 5 attempts)`.
+
+Los reintentos automáticos de Sidekiq están **desactivados** (`retry: false`): la reprogramación es explícita y se basa en el estado de la base.
+
+**Espera entre intentos** (`Orders::DispatchRetryPolicy`):
+
+```
+espera = max(base × 2^(intento − 1), Retry-After), con un tope de DISPATCH_RETRY_MAX_SECONDS
+```
+
+| Intento fallido | 1 | 2 | 3 | 4 | 5 |
+|---|---|---|---|---|---|
+| Espera con base 10 s (por defecto) | 10 s | 20 s | 40 s | 80 s | — `failed` |
+| Espera con base 2 s (`bin/dev` y Docker) | 2 s | 4 s | 8 s | 16 s | — `failed` |
+
+- **`Retry-After`:** si la tienda lo envía, típicamente con un `429` o un `503`, se respeta cuando pide más tiempo que el backoff. Acepta segundos (`120`) o una fecha HTTP. Un valor ilegible o en el pasado se ignora.
+- **Tope:** ninguna espera supera `DISPATCH_RETRY_MAX_SECONDS` (300 s), aunque la tienda pida más.
+- Con base 2 s, una tienda caída agota sus 5 intentos tras 30 s de espera (2 + 4 + 8 + 16), y por eso `bin/dev` y Docker usan ese valor; con la base por defecto de 10 s serían 150 s. En la práctica, cada reintento se demora además hasta unos 5 s, que es lo que tarda Sidekiq en revisar sus jobs programados: en una prueba en vivo con Docker, la tienda caída llegó a `failed` en unos 42 s.
+
+Si al programar el reintento Redis no está disponible, la orden queda igualmente `pending` con su `next_dispatch_at`, y el proceso de recuperación la retoma.
 
 ## Auditoría
 
@@ -100,6 +124,8 @@ Cada intento queda en `dispatch_attempts`, con ciclo, número de intento, token,
 |---|---|---|
 | `MAX_ATTEMPTS_PER_CYCLE` | `5` | Intentos totales de un ciclo de despacho. |
 | `DISPATCH_LEASE_SECONDS` | `60` | Cuánto tiempo un worker tiene tomada una orden. Debe ser mayor que 13 s. |
+| `DISPATCH_RETRY_BASE_SECONDS` | `10` (`2` en `bin/dev` y Docker) | Espera antes del primer reintento; se duplica en cada intento. |
+| `DISPATCH_RETRY_MAX_SECONDS` | `300` | Tope de cualquier espera, incluida la que pida `Retry-After`. |
 | `REDIS_URL` | `redis://localhost:6379/0` | Redis de Sidekiq. |
 
 ## Ejecutar el worker

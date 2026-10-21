@@ -7,6 +7,10 @@ Rails.application.configure do
   # How long a worker holds an order. It must outlast the whole HTTP call, so
   # no other worker takes over an order whose delivery is still in progress.
   dispatch.lease_seconds = Integer(ENV.fetch("DISPATCH_LEASE_SECONDS", 60))
+  # Wait before retrying a transient failure: base * 2**(attempt - 1), or
+  # longer if the store asks for it with Retry-After, never above the cap.
+  dispatch.retry_base_seconds = Integer(ENV.fetch("DISPATCH_RETRY_BASE_SECONDS", 10))
+  dispatch.retry_max_seconds = Integer(ENV.fetch("DISPATCH_RETRY_MAX_SECONDS", 300))
   dispatch.open_timeout_seconds = 3
   dispatch.read_timeout_seconds = 10
 
