@@ -166,7 +166,7 @@ erDiagram
 - **Despacho auditable.** Cada intento de entrega queda en `dispatch_attempts`, con su resultado, el código HTTP y la duración. El dashboard muestra ese historial.
 - **IDs fijos en el catálogo.** Restaurantes (1 a 3) y productos (1 a 10) usan los IDs del dataset de la prueba, porque el payload los referencia directamente.
 
-La tienda simulada guarda su propio estado en tablas separadas (`simulated_store_modes` y `simulated_store_requests`) que no se relacionan con el dominio de órdenes. Se documentan junto a la tienda simulada.
+La tienda simulada guarda su propio estado en tablas separadas (`simulated_store_modes` y `simulated_store_requests`) que no se relacionan con el dominio de órdenes. Se describen en [Tiendas simuladas](simulated_stores.md).
 
 ## Flujo de una orden
 

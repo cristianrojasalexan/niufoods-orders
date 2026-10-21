@@ -10,7 +10,7 @@
 #
 # It's strongly recommended that you check this file into your version control system.
 
-ActiveRecord::Schema[8.0].define(version: 2026_10_21_172853) do
+ActiveRecord::Schema[8.1].define(version: 2026_10_21_191131) do
   # These are extensions that must be enabled in order to support this database
   enable_extension "pg_catalog.plpgsql"
 
@@ -68,6 +68,24 @@ ActiveRecord::Schema[8.0].define(version: 2026_10_21_172853) do
     t.datetime "created_at", null: false
     t.datetime "updated_at", null: false
     t.index ["code"], name: "index_restaurants_on_code", unique: true
+  end
+
+  create_table "simulated_store_modes", primary_key: "store_code", id: :string, force: :cascade do |t|
+    t.string "mode", null: false
+    t.datetime "created_at", null: false
+    t.datetime "updated_at", null: false
+  end
+
+  create_table "simulated_store_requests", force: :cascade do |t|
+    t.string "store_code", null: false
+    t.string "idempotency_key", null: false
+    t.integer "attempts", default: 0, null: false
+    t.datetime "received_at"
+    t.jsonb "payload"
+    t.datetime "created_at", null: false
+    t.datetime "updated_at", null: false
+    t.index ["store_code", "idempotency_key"], name: "idx_on_store_code_idempotency_key_5886e0d50b", unique: true
+    t.check_constraint "received_at IS NULL OR payload IS NOT NULL", name: "simulated_store_requests_receipt_has_payload"
   end
 
   add_foreign_key "order_items", "orders"

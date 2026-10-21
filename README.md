@@ -8,6 +8,7 @@ API central para recibir, validar, persistir y despachar órdenes a los restaura
 
 - [Arquitectura, modelo de datos y flujo de una orden](docs/architecture.md)
 - [API de órdenes: contrato, validaciones y errores](docs/api.md)
+- [Tiendas simuladas: recepción, deduplicación y modos](docs/simulated_stores.md)
 
 ## Stack
 
