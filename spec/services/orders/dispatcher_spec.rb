@@ -141,6 +141,31 @@ RSpec.describe Orders::Dispatcher do
     end
   end
 
+  describe "a worker that is suspended right after its claim" do
+    # Between the claim and the rest of its work, the lease of the first
+    # worker expires and a second worker takes the order over and delivers
+    # it. The first one must still record its own attempt number.
+    before do
+      stub_store(status: 201)
+      taken_over = false
+      allow(Order).to receive(:includes).and_wrap_original do |original, *args|
+        unless taken_over
+          taken_over = true
+          Order.where(id: order.id).update_all(dispatch_lease_expires_at: 1.second.ago)
+          described_class.call(order.id)
+        end
+        original.call(*args)
+      end
+    end
+
+    it "records each attempt with the number its own claim got" do
+      dispatch
+
+      expect(order.dispatch_attempts.map { |attempt| [ attempt.attempt_number, attempt.outcome ] })
+        .to contain_exactly([ 2, "success" ], [ 1, "stale" ])
+    end
+  end
+
   describe "a worker that loses its lease during the delivery" do
     # While the request is in flight, the lease expires and another worker
     # takes over the order with its own token.

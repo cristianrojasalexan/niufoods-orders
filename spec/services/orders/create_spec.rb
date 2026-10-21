@@ -81,6 +81,34 @@ RSpec.describe Orders::Create do
       expect(DispatchOrderJob.jobs).to be_empty
     end
 
+    context "when Redis is not available" do
+      before do
+        allow(DispatchOrderJob).to receive(:perform_async).and_raise(RedisClient::CannotConnectError, "Connection refused")
+      end
+
+      it "still reports the order as created" do
+        result = call
+
+        expect(result.status).to eq(:created)
+        expect(result.order).to be_persisted
+      end
+
+      it "leaves the order pending and due, ready to be recovered" do
+        order = call.order.reload
+
+        expect(order).to have_attributes(dispatch_status: "pending", dispatch_attempts_count: 0)
+        expect(order.next_dispatch_at).to be <= Time.current
+      end
+
+      it "logs the failure with the order" do
+        allow(Rails.logger).to receive(:warn)
+
+        order = call.order
+
+        expect(Rails.logger).to have_received(:warn).with(/#{order.number}.*CannotConnectError/)
+      end
+    end
+
     it "leaves new orders pending" do
       expect(call.order).to have_attributes(dispatch_status: "pending", dispatch_attempts_count: 0)
     end

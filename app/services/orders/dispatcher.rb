@@ -13,7 +13,26 @@ module Orders
   #
   # Every attempt is recorded in dispatch_attempts.
   class Dispatcher
+    # What the claim assigned to this worker, read in the same statement.
+    Claim = Data.define(:token, :cycle, :attempt_number)
     Delivery = Data.define(:outcome, :http_status, :error_message, :duration_ms)
+
+    # Takes a due order with attempts left, or one whose lease expired. The
+    # attempt number comes back with RETURNING: reading it afterwards could
+    # pick up the number of a worker that took the order over in between.
+    CLAIM_SQL = <<~SQL.squish.freeze
+      UPDATE orders
+      SET dispatch_status = 'dispatching',
+          dispatch_token = :token,
+          dispatch_attempts_count = dispatch_attempts_count + 1,
+          dispatch_lease_expires_at = now() + make_interval(secs => :lease_seconds),
+          updated_at = now()
+      WHERE id = :id
+        AND dispatch_attempts_count < :max_attempts
+        AND ((dispatch_status = 'pending' AND next_dispatch_at <= now())
+             OR (dispatch_status = 'dispatching' AND dispatch_lease_expires_at < now()))
+      RETURNING dispatch_cycle, dispatch_attempts_count
+    SQL
 
     # Worth retrying: the store may accept the order later.
     TRANSIENT_STATUSES = [ 408, 425, 429 ].freeze
@@ -30,31 +49,23 @@ module Orders
     # Returns the outcome of the attempt (:success, :transient, :permanent or
     # :stale), or :skipped when the order could not be claimed.
     def call
-      token = SecureRandom.uuid
-      return :skipped unless claim(token)
+      claim = claim_order
+      return :skipped unless claim
 
       order = Order.includes(:restaurant, order_items: :product).find(order_id)
-      finish(order, token, deliver(order))
+      finish(order, claim, deliver(order))
     end
 
     private
 
     attr_reader :order_id, :settings
 
-    def claim(token)
-      Order.where(id: order_id)
-           .where("dispatch_attempts_count < ?", settings.max_attempts_per_cycle)
-           .where(<<~SQL.squish)
-             (dispatch_status = 'pending' AND next_dispatch_at <= now())
-             OR (dispatch_status = 'dispatching' AND dispatch_lease_expires_at < now())
-           SQL
-           .update_all([ <<~SQL.squish, token, settings.lease_seconds ]) == 1
-             dispatch_status = 'dispatching',
-             dispatch_token = ?,
-             dispatch_attempts_count = dispatch_attempts_count + 1,
-             dispatch_lease_expires_at = now() + make_interval(secs => ?),
-             updated_at = now()
-           SQL
+    def claim_order
+      token = SecureRandom.uuid
+      sql = Order.sanitize_sql_array([ CLAIM_SQL, { token: token, id: order_id, lease_seconds: settings.lease_seconds,
+                                                    max_attempts: settings.max_attempts_per_cycle } ])
+      row = Order.connection.exec_query(sql, "Order Dispatch Claim").first
+      Claim.new(token: token, cycle: row["dispatch_cycle"], attempt_number: row["dispatch_attempts_count"]) if row
     end
 
     def deliver(order)
@@ -79,11 +90,11 @@ module Orders
       :permanent
     end
 
-    def finish(order, token, delivery)
+    def finish(order, claim, delivery)
       Order.transaction do
-        applied = Order.where(id: order.id, dispatch_token: token).update_all(result_columns(delivery)) == 1
+        applied = Order.where(id: order.id, dispatch_token: claim.token).update_all(result_columns(delivery)) == 1
         outcome = applied ? delivery.outcome : :stale
-        record_attempt(order, token, delivery, outcome)
+        record_attempt(order, claim, delivery, outcome)
         outcome
       end
     end
@@ -97,11 +108,11 @@ module Orders
       end
     end
 
-    def record_attempt(order, token, delivery, outcome)
+    def record_attempt(order, claim, delivery, outcome)
       order.dispatch_attempts.create!(
-        dispatch_cycle: order.dispatch_cycle,
-        attempt_number: order.dispatch_attempts_count,
-        dispatch_token: token,
+        dispatch_cycle: claim.cycle,
+        attempt_number: claim.attempt_number,
+        dispatch_token: claim.token,
         outcome: outcome,
         http_status: delivery.http_status,
         error_message: stale_message(delivery, outcome) || delivery.error_message,

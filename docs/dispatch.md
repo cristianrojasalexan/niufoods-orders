@@ -46,6 +46,8 @@ WHERE id = ?
   )
 ```
 
+La misma sentencia devuelve (`RETURNING`) el número de intento que le tocó a este worker, que es el que se registra en la auditoría. Si se leyera después, podría ser el de otro worker que retomó la orden entretanto.
+
 Si no cambia ninguna fila, el job termina sin hacer nada. Puede ser porque la orden todavía no corresponde, porque otro worker la tiene, porque ya terminó o porque se agotaron sus intentos. Como es una sola sentencia, dos workers nunca toman la misma orden al mismo tiempo.
 
 **Lease:** el worker tiene la orden hasta `dispatch_lease_expires_at`. Si muere a mitad del envío, cuando la lease vence otro worker puede retomarla con un token nuevo. Eso también cuenta como intento. La lease (60 s) dura más que todo el request HTTP (3 s para conectar y 10 s para la respuesta); si no fuera así, la app no arranca.
@@ -64,6 +66,12 @@ El `Idempotency-Key` es el número de la orden. La entrega es **al menos una vez
 ### 3. Resultado, solo con el token vigente
 
 El resultado se escribe con `UPDATE ... WHERE id = ? AND dispatch_token = <token del worker>`. Si otro worker retomó la orden mientras tanto, el token ya no coincide, no cambia ninguna fila y el resultado del worker antiguo se descarta. Así **un worker que termina tarde nunca sobrescribe el resultado del que lo reemplazó**.
+
+## Encolado y fallas de Redis
+
+El job se encola **después del commit** de la orden, para que el worker nunca busque una orden que todavía no existe. Si Redis no está disponible en ese momento, la orden ya quedó guardada: la API responde igual `201`, la orden queda `pending` con `next_dispatch_at` vencido y se registra un warning en el log. Un reintento con la misma `Idempotency-Key` responde `200` con esa misma orden.
+
+> Todavía falta el proceso que retoma esas órdenes pendientes cuando Redis vuelve; se agrega en un paso posterior de la implementación.
 
 ## Clasificación de la respuesta
 

@@ -53,6 +53,17 @@ RSpec.describe "API v1 orders", type: :request do
       end
     end
 
+    it "returns 201 even if the dispatch cannot be enqueued, and replays it" do
+      allow(DispatchOrderJob).to receive(:perform_async).and_raise(RedisClient::CannotConnectError)
+
+      post api_v1_orders_path, params: payload, as: :json, headers: { "Idempotency-Key" => "redis-down" }
+      expect(response).to have_http_status(:created)
+
+      post api_v1_orders_path, params: payload, as: :json, headers: { "Idempotency-Key" => "redis-down" }
+      expect(response).to have_http_status(:ok)
+      expect(Order.sole).to be_dispatch_pending
+    end
+
     it "ignores attributes outside the contract" do
       post_order(payload.merge(number: "HACK-1", total: 1, items: [ { product_id: 1, quantity: 1, unit_price: 1 } ]))
 
