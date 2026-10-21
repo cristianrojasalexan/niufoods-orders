@@ -135,9 +135,9 @@ erDiagram
         bigint id PK
         bigint order_id FK
         bigint product_id FK
-        integer quantity "mayor que 0"
+        integer quantity "entre 1 y 99"
         integer unit_price "precio congelado"
-        integer subtotal
+        integer subtotal "unit_price × quantity"
     }
 
     DISPATCH_ATTEMPTS {
@@ -158,7 +158,10 @@ erDiagram
 - **Montos en enteros.** El peso chileno no usa decimales, así que precios y totales son `integer`. Se evitan los errores de redondeo de los `float`.
 - **Precio congelado en cada ítem.** `order_items.unit_price` guarda el precio vigente al crear la orden. Si después cambia el catálogo, el total de las órdenes ya guardadas no cambia.
 - **Un producto por orden aparece una sola vez.** Hay un índice único en `(order_id, product_id)`. Si el payload repite un producto, sus cantidades se suman en un solo ítem.
-- **Integridad en la base de datos, no solo en Rails.** Claves foráneas, columnas `NOT NULL` y restricciones `CHECK` (`quantity > 0`, `total_amount >= 0`) protegen los datos aunque alguien escriba sin pasar por los modelos.
+- **Integridad en la base de datos, no solo en Rails.** Claves foráneas, columnas `NOT NULL` y restricciones `CHECK` protegen los datos aunque alguien escriba sin pasar por los modelos: `quantity > 0`, `subtotal = unit_price * quantity`, `total_amount >= 0`, tipo de pedido válido y dirección obligatoria en delivery.
+- **Total derivado de los ítems.** El modelo `Order` recalcula `total_amount` a partir de los subtotales antes de validar, así que un total asignado desde afuera nunca se guarda.
+- **Hasta 99 unidades por producto.** Es un límite de negocio razonable para una orden de restaurante y evita montos fuera de rango.
+- **Número de orden legible.** El formato es `<código de tienda>-<id con 6 dígitos>` (por ejemplo, `LCON-000042`). El `id` se reserva desde la secuencia de la tabla antes de insertar, así que el número se guarda en el mismo `INSERT` y es único aunque lleguen órdenes en paralelo.
 - **Despacho auditable.** Cada intento de entrega queda en `dispatch_attempts`, con su resultado, el código HTTP y la duración. El dashboard muestra ese historial.
 - **IDs fijos en el catálogo.** Restaurantes (1 a 3) y productos (1 a 10) usan los IDs del dataset de la prueba, porque el payload los referencia directamente.
 

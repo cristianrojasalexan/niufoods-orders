@@ -32,3 +32,11 @@ en:
   errors:
     messages:
       invalid_url: "must be an absolute http(s) URL with a host"
+  activerecord:
+    errors:
+      models:
+        order:
+          attributes:
+            order_items:
+              no_items: "must include at least one product"
+              duplicate_products: "must not repeat a product"
