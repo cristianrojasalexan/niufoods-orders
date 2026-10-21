@@ -9,3 +9,15 @@ API central para recibir, validar, persistir y despachar órdenes a los restaura
 - Ruby 3.2 / Rails 8.0
 - PostgreSQL
 - Tailwind CSS + Hotwire
+- Redis
+
+## Servicios de infraestructura
+
+PostgreSQL 16 y Redis 7 se levantan con Docker Compose:
+
+```bash
+docker compose up -d --wait
+bin/rails db:prepare
+```
+
+Las credenciales por defecto de `config/database.yml` coinciden con el servicio `db`. Para cambiarlas, copia `.env.example` y ajusta las variables `DB_*`.
