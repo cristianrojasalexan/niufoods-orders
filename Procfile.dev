@@ -1,3 +1,4 @@
 web: bin/rails server
 css: bin/rails tailwindcss:watch
 worker: env DISPATCH_RETRY_BASE_SECONDS=${DISPATCH_RETRY_BASE_SECONDS:-2} bundle exec sidekiq -C config/sidekiq.yml
+recovery: bin/dispatch_recovery

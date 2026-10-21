@@ -72,7 +72,7 @@ El resultado se escribe con `UPDATE ... WHERE id = ? AND dispatch_token = <token
 
 El job se encola **después del commit** de la orden, para que el worker nunca busque una orden que todavía no existe. Si Redis no está disponible en ese momento, la orden ya quedó guardada: la API responde igual `201`, la orden queda `pending` con `next_dispatch_at` vencido y se registra un warning en el log. Un reintento con la misma `Idempotency-Key` responde `200` con esa misma orden.
 
-> Todavía falta el proceso que retoma esas órdenes pendientes cuando Redis vuelve; se agrega en un paso posterior de la implementación.
+Esas órdenes las retoma la [recuperación](#recuperación) cuando los servicios vuelven a estar disponibles.
 
 ## Clasificación de la respuesta
 
@@ -107,6 +107,28 @@ espera = max(base × 2^(intento − 1), Retry-After), con un tope de DISPATCH_RE
 
 Si al programar el reintento Redis no está disponible, la orden queda igualmente `pending` con su `next_dispatch_at`, y el proceso de recuperación la retoma.
 
+## Recuperación
+
+Un despacho puede quedar sin job que lo ejecute: la orden se guardó con Redis caído, un reintento no se pudo programar o un worker murió con la orden tomada. `bin/dispatch_recovery` corre `Orders::DispatchRecovery` cada `DISPATCH_RECOVERY_INTERVAL_SECONDS` (60 s) y hace dos cosas:
+
+1. **Cierra las leases vencidas sin intentos.** Una orden `dispatching` cuya lease venció durante el último intento del ciclo pasa a `failed` con `lease expired during the last attempt (5); delivery result unknown`. También se anula su token, así que si ese worker termina tarde su `UPDATE` no encuentra la fila y su intento queda como `stale`.
+2. **Vuelve a encolar lo que corresponde:**
+   - órdenes `pending` cuyo próximo intento quedó atrás hace más de `DISPATCH_RECOVERY_GRACE_SECONDS` (30 s). El margen deja tiempo para que corra el job programado normalmente;
+   - órdenes `dispatching` con la lease vencida y con intentos disponibles.
+
+   Las más antiguas van primero, en lotes de 500.
+
+**Es seguro encolar de más.** Si la recuperación encola una orden que todavía no corresponde, o que ya tiene un job en camino, el claim lo descarta: vuelve a verificar en PostgreSQL que la orden esté vencida y que le queden intentos. La recuperación se puede correr varias veces sin efectos duplicados.
+
+**Si Redis sigue caído**, la ronda falla, se registra en el log y se repite en la siguiente. Mientras tanto las órdenes siguen `pending` en PostgreSQL. **Las órdenes se recuperan automáticamente cuando los servicios vuelven a estar disponibles.** No hay un tiempo máximo garantizado: depende de cuándo vuelva Redis, del intervalo de la recuperación, del margen y de la cola de Sidekiq.
+
+```bash
+bin/dispatch_recovery            # proceso periódico (lo levantan bin/dev y docker compose)
+bin/rails orders:recover_dispatch   # una sola ronda, por ejemplo desde un cron
+```
+
+**Limitación conocida:** no hay *transactional outbox*. Entre el commit de una orden y el encolado de su job hay una ventana en la que una falla de Redis deja la orden sin job hasta la siguiente ronda de recuperación. Un outbox, es decir, una tabla de eventos escrita en la misma transacción y publicada por un proceso aparte, cerraría esa ventana; quedó como trabajo futuro. Si se necesitara programar la recuperación dentro de Sidekiq, `sidekiq-cron` es una alternativa al proceso propio.
+
 ## Auditoría
 
 Cada intento queda en `dispatch_attempts`, con ciclo, número de intento, token, resultado, código HTTP, error y duración:
@@ -126,6 +148,8 @@ Cada intento queda en `dispatch_attempts`, con ciclo, número de intento, token,
 | `DISPATCH_LEASE_SECONDS` | `60` | Cuánto tiempo un worker tiene tomada una orden. Debe ser mayor que 13 s. |
 | `DISPATCH_RETRY_BASE_SECONDS` | `10` (`2` en `bin/dev` y Docker) | Espera antes del primer reintento; se duplica en cada intento. |
 | `DISPATCH_RETRY_MAX_SECONDS` | `300` | Tope de cualquier espera, incluida la que pida `Retry-After`. |
+| `DISPATCH_RECOVERY_INTERVAL_SECONDS` | `60` | Cada cuánto corre la recuperación. |
+| `DISPATCH_RECOVERY_GRACE_SECONDS` | `30` | Cuánto puede atrasarse una orden `pending` antes de que la recuperación la encole de nuevo. |
 | `REDIS_URL` | `redis://localhost:6379/0` | Redis de Sidekiq. |
 
 ## Ejecutar el worker
@@ -134,4 +158,4 @@ Cada intento queda en `dispatch_attempts`, con ciclo, número de intento, token,
 bundle exec sidekiq -C config/sidekiq.yml
 ```
 
-`bin/dev` lo levanta junto con el servidor. El worker procesa la cola `dispatch`.
+`bin/dev` lo levanta junto con el servidor y la recuperación. El worker procesa la cola `dispatch`.

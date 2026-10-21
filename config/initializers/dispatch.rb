@@ -11,6 +11,11 @@ Rails.application.configure do
   # longer if the store asks for it with Retry-After, never above the cap.
   dispatch.retry_base_seconds = Integer(ENV.fetch("DISPATCH_RETRY_BASE_SECONDS", 10))
   dispatch.retry_max_seconds = Integer(ENV.fetch("DISPATCH_RETRY_MAX_SECONDS", 300))
+  # Dispatch recovery (bin/dispatch_recovery): how often it runs, and how long
+  # past next_dispatch_at a pending order may wait for its scheduled job
+  # before the recovery enqueues it again.
+  dispatch.recovery_interval_seconds = Integer(ENV.fetch("DISPATCH_RECOVERY_INTERVAL_SECONDS", 60))
+  dispatch.recovery_grace_seconds = Integer(ENV.fetch("DISPATCH_RECOVERY_GRACE_SECONDS", 30))
   dispatch.open_timeout_seconds = 3
   dispatch.read_timeout_seconds = 10
 

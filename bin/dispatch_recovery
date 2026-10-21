@@ -1,0 +1,28 @@
+#!/usr/bin/env ruby
+# Runs Orders::DispatchRecovery every DISPATCH_RECOVERY_INTERVAL_SECONDS
+# (60 by default) until it is stopped. Started by bin/dev and docker compose.
+#
+# A failed round, for example while Redis is down, is logged and retried in
+# the next one: the orders stay pending in PostgreSQL meanwhile.
+require_relative "../config/environment"
+
+$stdout.sync = true
+interval = Rails.configuration.x.dispatch.recovery_interval_seconds
+stopping = false
+%w[INT TERM].each { |signal| trap(signal) { stopping = true } }
+
+puts "Dispatch recovery running every #{interval}s"
+until stopping
+  begin
+    result = Rails.application.executor.wrap { Orders::DispatchRecovery.call }
+    if result.enqueued.positive? || result.failed.positive?
+      puts "Dispatch recovery: #{result.enqueued} enqueued, #{result.failed} failed"
+    end
+  rescue StandardError => e
+    warn "Dispatch recovery failed (#{e.class}: #{e.message}); retrying in #{interval}s"
+  end
+
+  # Sleep in short steps so a stop signal is handled promptly.
+  interval.times { break if stopping; sleep 1 }
+end
+puts "Dispatch recovery stopped"

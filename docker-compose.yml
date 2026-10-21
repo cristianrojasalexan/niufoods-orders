@@ -1,7 +1,8 @@
 # Runs the whole solution: docker compose up --build
 #
 # Start order: db and redis become healthy, setup prepares the database and
-# loads the seeds, then web starts, and sidekiq starts once web is healthy.
+# loads the seeds, then web starts, and sidekiq and dispatch_recovery start
+# once web is healthy.
 #
 # Variables such as STORE_MODES or MAX_ATTEMPTS_PER_CYCLE can be set in a .env
 # file next to this one (see .env.example).
@@ -33,6 +34,8 @@ x-app: &app
     # store that is down exhausts its 5 attempts in about 30 s.
     DISPATCH_RETRY_BASE_SECONDS: ${DISPATCH_RETRY_BASE_SECONDS:-2}
     DISPATCH_RETRY_MAX_SECONDS: ${DISPATCH_RETRY_MAX_SECONDS:-300}
+    DISPATCH_RECOVERY_INTERVAL_SECONDS: ${DISPATCH_RECOVERY_INTERVAL_SECONDS:-60}
+    DISPATCH_RECOVERY_GRACE_SECONDS: ${DISPATCH_RECOVERY_GRACE_SECONDS:-30}
 
 services:
   db:
@@ -76,6 +79,9 @@ services:
 
   web:
     <<: *app
+    # Long-running services come back if they crash, e.g. Sidekiq exits when
+    # Redis is unreachable at boot.
+    restart: unless-stopped
     ports:
       - "${WEB_PORT:-3000}:3000"
     depends_on:
@@ -91,7 +97,20 @@ services:
   # otherwise be delivered to stores that are not listening yet.
   sidekiq:
     <<: *app
+    restart: unless-stopped
     command: ["bundle", "exec", "sidekiq", "-C", "config/sidekiq.yml"]
+    depends_on:
+      setup:
+        condition: service_completed_successfully
+      web:
+        condition: service_healthy
+
+  # Enqueues again the dispatches that lost their job (e.g. an order saved
+  # while Redis was down) and fails expired leases without attempts left.
+  dispatch_recovery:
+    <<: *app
+    restart: unless-stopped
+    command: ["bin/dispatch_recovery"]
     depends_on:
       setup:
         condition: service_completed_successfully

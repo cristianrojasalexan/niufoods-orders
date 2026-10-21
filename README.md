@@ -8,7 +8,7 @@ API central para recibir, validar, persistir y despachar órdenes a los restaura
 
 - [Arquitectura, modelo de datos y flujo de una orden](docs/architecture.md)
 - [API de órdenes: contrato, validaciones y errores](docs/api.md)
-- [Despacho a tienda: claim, lease y clasificación de errores](docs/dispatch.md)
+- [Despacho a tienda: claim, lease, reintentos y recuperación](docs/dispatch.md)
 - [Tiendas simuladas: recepción, deduplicación y modos](docs/simulated_stores.md)
 
 ## Stack
@@ -20,14 +20,15 @@ API central para recibir, validar, persistir y despachar órdenes a los restaura
 
 ## Ejecución con Docker
 
-Levanta todo (PostgreSQL, Redis, la app y el worker de Sidekiq) con un solo comando:
+Levanta todo (PostgreSQL, Redis, la app, el worker de Sidekiq y la recuperación de despachos) con un solo comando:
 
 ```bash
 docker compose up --build
 ```
 
 - La app queda en http://localhost:3000 (API, tiendas simuladas y, más adelante, el dashboard).
-- Orden de arranque: `setup` prepara la base y carga las seeds; recién después arranca `web`, y `sidekiq` espera a que `web` responda. Así el primer inicio funciona desde cero y el worker nunca entrega órdenes a tiendas que todavía no escuchan.
+- Orden de arranque: `setup` prepara la base y carga las seeds; recién después arranca `web`, y `sidekiq` y `dispatch_recovery` esperan a que `web` responda. Así el primer inicio funciona desde cero y el worker nunca entrega órdenes a tiendas que todavía no escuchan.
+- `web`, `sidekiq` y `dispatch_recovery` se reinician solos si se caen; por ejemplo, Sidekiq termina si arranca sin Redis disponible.
 - Docker usa su propia base (`niufoods_orders_docker`) y su propia base de Redis (`/1`), separadas de las de la ejecución local, para que los workers de un entorno nunca tomen jobs del otro.
 - Variables como `STORE_MODES` o `MAX_ATTEMPTS_PER_CYCLE` se configuran en un archivo `.env` junto a `docker-compose.yml` (ver `.env.example`).
 - El primer build compila las gemas y puede tardar varios minutos; los siguientes reutilizan la caché.
@@ -40,7 +41,7 @@ Requiere Ruby 3.4.11. PostgreSQL y Redis pueden venir del mismo `docker-compose.
 ```bash
 docker compose up -d --wait db redis
 bin/setup --skip-server   # gemas, base de datos y seeds
-bin/dev                   # servidor web, Tailwind y worker de Sidekiq
+bin/dev                   # servidor web, Tailwind, worker de Sidekiq y recuperación
 ```
 
 `db:prepare` crea la base, corre las migraciones y, si la base es nueva, carga las seeds. Las seeds se pueden volver a correr cuando quieras con `bin/rails db:seed`: cargan el dataset de la prueba (`db/data/restaurants.json` y `db/data/products.json`) con sus IDs originales y nunca duplican registros.
