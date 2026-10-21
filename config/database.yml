@@ -13,7 +13,7 @@ default: &default
 
 development:
   <<: *default
-  database: niufoods_orders_development
+  database: <%= ENV.fetch("DB_NAME", "niufoods_orders_development") %>
 
 test:
   <<: *default

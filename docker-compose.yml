@@ -1,3 +1,26 @@
+# Runs the whole solution: docker compose up --build
+#
+# Start order: db and redis become healthy, setup prepares the database and
+# loads the seeds, and only then web and sidekiq start.
+
+x-app: &app
+  build:
+    context: .
+    dockerfile: Dockerfile.dev
+  image: niufoods-orders-dev
+  environment:
+    DB_HOST: db
+    # Its own database, so running the stack does not change the one used by
+    # bin/dev on the host (the seeds point the stores to the web service).
+    DB_NAME: niufoods_orders_docker
+    DB_USERNAME: postgres
+    DB_PASSWORD: postgres
+    REDIS_URL: redis://redis:6379/0
+    # The worker reaches the simulated stores through the web service.
+    STORE_BASE_URL: http://web:3000/simulated_stores
+    ALLOWED_HOSTS: web
+    STORE_MODES: ${STORE_MODES:-PROV=ok,LCON=ok,NUNO=ok}
+
 services:
   db:
     image: postgres:16-alpine
@@ -25,6 +48,38 @@ services:
       interval: 5s
       timeout: 3s
       retries: 10
+
+  # One-off: creates or migrates the database and loads the seeds, which are
+  # idempotent, every time the stack starts.
+  setup:
+    <<: *app
+    command: ["bin/rails", "db:prepare", "db:seed"]
+    restart: "no"
+    depends_on:
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+
+  web:
+    <<: *app
+    ports:
+      - "${WEB_PORT:-3000}:3000"
+    depends_on:
+      setup:
+        condition: service_completed_successfully
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://localhost:3000/up"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+
+  sidekiq:
+    <<: *app
+    command: ["bundle", "exec", "sidekiq", "-C", "config/sidekiq.yml"]
+    depends_on:
+      setup:
+        condition: service_completed_successfully
 
 volumes:
   postgres_data:
