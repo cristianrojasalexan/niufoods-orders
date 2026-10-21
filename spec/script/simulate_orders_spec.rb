@@ -78,12 +78,33 @@ RSpec.describe OrderSimulation do
     end
   end
 
-  it "reports a network error instead of stopping" do
-    stub_request(:post, "http://down.test/api/v1/orders").to_raise(Errno::ECONNREFUSED)
+  describe "network errors" do
+    {
+      "a refused connection" => Errno::ECONNREFUSED,
+      "an invalid or expired TLS certificate" => OpenSSL::SSL::SSLError,
+      "a malformed HTTP response" => Net::HTTPBadResponse,
+      "a protocol error" => Net::ProtocolError
+    }.each do |description, error|
+      it "reports #{description} instead of stopping" do
+        stub_request(:post, "https://store.test/api/v1/orders").to_raise(error)
 
-    response = OrderSimulation::Client.new("http://down.test").create_order({})
+        response = OrderSimulation::Client.new("https://store.test").create_order({})
 
-    expect(response.error).to match(/ECONNREFUSED/)
+        expect(response.error).to start_with(error.name)
+      end
+    end
+
+    it "keeps sending the remaining orders and prints the summary" do
+      stub_request(:post, "https://store.test/api/v1/orders").to_raise(OpenSSL::SSL::SSLError)
+      out = StringIO.new
+
+      outcomes = OrderSimulation::Run.new(count: 3, invalid_ratio: 0, client: OrderSimulation::Client.new("https://store.test"),
+                                          generator: generator, random: Random.new(1), out: out).call
+
+      expect(outcomes.size).to eq(3)
+      expect(outcomes).to all(be_network_error)
+      expect(out.string).to include("Network errors:          3")
+    end
   end
 
   it "validates its options" do

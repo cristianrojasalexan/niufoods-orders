@@ -11,6 +11,7 @@
 # exits with status 1 if any order got an unexpected answer.
 require "json"
 require "net/http"
+require "openssl"
 require "optparse"
 require "securerandom"
 require "uri"
@@ -102,6 +103,11 @@ module OrderSimulation
   class Client
     Response = Struct.new(:status, :body, :error, keyword_init: true)
 
+    # Everything that can go wrong on the way to the API: refused or reset
+    # connections, timeouts, DNS, TLS certificates and malformed responses.
+    NETWORK_ERRORS = [ SystemCallError, IOError, Timeout::Error, SocketError, OpenSSL::SSL::SSLError,
+                       Net::HTTPBadResponse, Net::ProtocolError ].freeze
+
     def initialize(base_url)
       @uri = URI.join(base_url, "/api/v1/orders")
     end
@@ -115,7 +121,7 @@ module OrderSimulation
         http.request(request)
       end
       Response.new(status: response.code.to_i, body: parse(response.body))
-    rescue SystemCallError, IOError, Timeout::Error, SocketError => e
+    rescue *NETWORK_ERRORS => e
       Response.new(error: "#{e.class}: #{e.message}")
     end
 

@@ -37,7 +37,7 @@ ruby script/simulate_orders.rb --url http://localhost:3000       # otra URL (o S
   | Restaurante inexistente | `restaurant_id: not_found` |
   | Sin productos | `items: blank` |
 
-- **Manejo de respuestas:** cada orden se marca `ok` si recibió lo esperado (`201` las válidas, `422` las inválidas) y `!!` si no. Un error de red se informa como resultado y no detiene la simulación.
+- **Manejo de respuestas:** cada orden se marca `ok` si recibió lo esperado (`201` las válidas, `422` las inválidas) y `!!` si no. Un error de red se informa como resultado de esa orden y la simulación sigue con las demás. Esto incluye conexión rechazada o cortada, timeout, DNS, un certificado TLS inválido o vencido y una respuesta HTTP mal formada.
 - **Cada orden lleva su propia `Idempotency-Key`**, igual que un canal real que quiere poder reintentar sin duplicar.
 - **Código de salida:** `0` si todas las respuestas fueron las esperadas, `1` si hubo alguna inesperada o algún error de red. Así se puede usar en un pipeline.
 
