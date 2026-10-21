@@ -4,6 +4,10 @@ API central para recibir, validar, persistir y despachar órdenes a los restaura
 
 > 🚧 En construcción. La documentación completa (arquitectura, flujo de órdenes, instalación y ejemplos de uso) se irá agregando a medida que avance la solución.
 
+## Documentación
+
+- [Arquitectura, modelo de datos y flujo de una orden](docs/architecture.md)
+
 ## Stack
 
 - Ruby 3.2 / Rails 8.0
