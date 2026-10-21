@@ -1,0 +1,12 @@
+[
+  { "id": 1, "name": "Niu Roll Salmón", "sku": "SKU-001", "price": 8990 },
+  { "id": 2, "name": "California Ebi", "sku": "SKU-002", "price": 7490 },
+  { "id": 3, "name": "Avocado Roll", "sku": "SKU-003", "price": 6990 },
+  { "id": 4, "name": "Nigiri Salmón x2", "sku": "SKU-004", "price": 3990 },
+  { "id": 5, "name": "Gyozas de Pollo x5", "sku": "SKU-005", "price": 4490 },
+  { "id": 6, "name": "Edamame", "sku": "SKU-006", "price": 3290 },
+  { "id": 7, "name": "Bowl Salmón Teriyaki", "sku": "SKU-007", "price": 9990 },
+  { "id": 8, "name": "Bowl Pollo Teriyaki", "sku": "SKU-008", "price": 8990 },
+  { "id": 9, "name": "Bebida 350 ml", "sku": "SKU-009", "price": 1990 },
+  { "id": 10, "name": "Agua Mineral 500 ml", "sku": "SKU-010", "price": 1590 }
+]
