@@ -21,3 +21,13 @@ bin/rails db:prepare
 ```
 
 Las credenciales por defecto de `config/database.yml` coinciden con el servicio `db`. Para cambiarlas, copia `.env.example` y ajusta las variables `DB_*`.
+
+## Tests y lint
+
+```bash
+bundle exec rspec      # suite de tests (RSpec + FactoryBot + shoulda-matchers + WebMock)
+bundle exec rubocop    # estilo (rubocop-rails-omakase)
+bin/brakeman           # análisis estático de seguridad
+```
+
+Los tests bloquean cualquier llamada HTTP real con WebMock: toda comunicación con las tiendas se stubbea.

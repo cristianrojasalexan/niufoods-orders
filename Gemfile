@@ -37,9 +37,20 @@ group :development, :test do
 
   # Omakase Ruby styling [https://github.com/rails/rubocop-rails-omakase/]
   gem "rubocop-rails-omakase", require: false
+
+  # Testing framework and test data [https://rspec.info/, https://github.com/thoughtbot/factory_bot_rails]
+  gem "rspec-rails", "~> 8.0"
+  gem "factory_bot_rails", "~> 6.5"
 end
 
 group :development do
   # Use console on exceptions pages [https://github.com/rails/web-console]
   gem "web-console"
+end
+
+group :test do
+  # One-liner matchers for validations and associations [https://github.com/thoughtbot/shoulda-matchers]
+  gem "shoulda-matchers", "~> 7.0"
+  # Stub outgoing HTTP calls (e.g. dispatches to stores) [https://github.com/bblimke/webmock]
+  gem "webmock", "~> 3.34"
 end
