@@ -11,7 +11,7 @@ API central para recibir, validar, persistir y despachar órdenes a los restaura
 
 ## Stack
 
-- Ruby 3.2 / Rails 8.0
+- Ruby 3.4 / Rails 8.1
 - PostgreSQL
 - Tailwind CSS + Hotwire
 - Redis
@@ -32,9 +32,11 @@ Las credenciales por defecto de `config/database.yml` coinciden con el servicio 
 ## Tests y lint
 
 ```bash
+bin/ci                 # todo lo de abajo, en el mismo orden que el CI
 bundle exec rspec      # suite de tests (RSpec + FactoryBot + shoulda-matchers + WebMock)
-bundle exec rubocop    # estilo (rubocop-rails-omakase)
+bin/rubocop            # estilo (rubocop-rails-omakase)
 bin/brakeman           # análisis estático de seguridad
+bin/bundler-audit      # vulnerabilidades conocidas en las gemas
 ```
 
 Los tests bloquean cualquier llamada HTTP real con WebMock: toda comunicación con las tiendas se stubbea.
