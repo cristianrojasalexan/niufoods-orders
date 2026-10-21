@@ -72,6 +72,7 @@ module Orders
     def payload_errors
       [
         *restaurant_id_errors,
+        *string_errors("order_type", payload["order_type"]),
         *customer_errors,
         *string_errors("delivery_address", payload["delivery_address"]),
         *items_errors,

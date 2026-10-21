@@ -85,10 +85,47 @@ RSpec.describe "API v1 orders", type: :request do
         .to contain_exactly([ "restaurant_id", "not_found" ], [ "items[0].product_id", "not_found" ])
     end
 
+    describe "values with the wrong shape" do
+      # Strong params alone would drop these values silently and accept the
+      # order without them; they must reject the whole request instead.
+      {
+        "an item that is not an object" => [ { items: [ 17, { product_id: 1, quantity: 1 } ] }, "items[0]" ],
+        "a total sent as an array" => [ { total_amount: [ 22_470 ] }, "total_amount" ],
+        "a total sent as an object" => [ { total_amount: { value: 22_470 } }, "total_amount" ],
+        "a restaurant id sent as an array" => [ { restaurant_id: [ 2 ] }, "restaurant_id" ],
+        "an order type sent as an array" => [ { order_type: [ "delivery" ] }, "order_type" ],
+        "a customer sent as a string" => [ { customer: "Ana Pérez" }, "customer" ],
+        "items sent as a string" => [ { items: "1,5" }, "items" ],
+        "a product id sent as an object" => [ { items: [ { product_id: { id: 1 }, quantity: 1 } ] }, "items[0].product_id" ],
+        "a quantity sent as an array" => [ { items: [ { product_id: 1, quantity: [ 2 ] } ] }, "items[0].quantity" ]
+      }.each do |description, (overrides, field)|
+        it "rejects #{description}" do
+          expect { post_order(payload.merge(overrides)) }.not_to change(Order, :count)
+
+          expect(response).to have_http_status(:unprocessable_content)
+          expect(json["errors"].map { |error| error["field"] }).to include(field)
+        end
+      end
+
+      it "reports the position of the item as it was sent" do
+        post_order(payload.merge(items: [ { product_id: 1, quantity: 1 }, "x", { product_id: 999, quantity: 1 } ]))
+
+        expect(json["errors"].map { |error| error["field"] }).to eq([ "items[1]" ])
+      end
+    end
+
     it "returns 400 when the body is empty" do
       post_order({})
 
       expect(response).to have_http_status(:bad_request)
+    end
+
+    [ "oops", 1, true, [ 1 ], nil ].each do |root|
+      it "returns 400 when order is #{root.inspect} instead of an object" do
+        post api_v1_orders_path, params: { order: root }.to_json, headers: { "CONTENT_TYPE" => "application/json" }
+
+        expect(response).to have_http_status(:bad_request)
+      end
     end
   end
 
