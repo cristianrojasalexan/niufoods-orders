@@ -25,6 +25,10 @@ gem "tailwindcss-rails"
 # Windows does not include zoneinfo files, so bundle the tzinfo-data gem
 gem "tzinfo-data", platforms: %i[ windows jruby ]
 
+# json 3.x dropped the quirks_mode option that Active Support 8.0 still passes
+# when encoding JSON, so keep the 2.x series until Rails supports it.
+gem "json", "~> 2.21"
+
 # Reduces boot times through caching; required in config/boot.rb
 gem "bootsnap", require: false
 
