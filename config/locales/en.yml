@@ -29,3 +29,6 @@
 
 en:
   hello: "Hello world"
+  errors:
+    messages:
+      invalid_url: "must be an absolute http(s) URL with a host"
