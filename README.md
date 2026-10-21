@@ -27,8 +27,9 @@ docker compose up --build
 ```
 
 - La app queda en http://localhost:3000 (API, tiendas simuladas y, más adelante, el dashboard).
-- El servicio `setup` prepara la base y carga las seeds **antes** de que arranquen `web` y `sidekiq`, así que el primer inicio funciona desde cero.
-- Docker usa su propia base (`niufoods_orders_docker`), separada de la de desarrollo local.
+- Orden de arranque: `setup` prepara la base y carga las seeds; recién después arranca `web`, y `sidekiq` espera a que `web` responda. Así el primer inicio funciona desde cero y el worker nunca entrega órdenes a tiendas que todavía no escuchan.
+- Docker usa su propia base (`niufoods_orders_docker`) y su propia base de Redis (`/1`), separadas de las de la ejecución local, para que los workers de un entorno nunca tomen jobs del otro.
+- Variables como `STORE_MODES` o `MAX_ATTEMPTS_PER_CYCLE` se configuran en un archivo `.env` junto a `docker-compose.yml` (ver `.env.example`).
 - El primer build compila las gemas y puede tardar varios minutos; los siguientes reutilizan la caché.
 - Para empezar de cero: `docker compose down -v && docker compose up --build`.
 

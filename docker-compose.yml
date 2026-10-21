@@ -1,7 +1,10 @@
 # Runs the whole solution: docker compose up --build
 #
 # Start order: db and redis become healthy, setup prepares the database and
-# loads the seeds, and only then web and sidekiq start.
+# loads the seeds, then web starts, and sidekiq starts once web is healthy.
+#
+# Variables such as STORE_MODES or MAX_ATTEMPTS_PER_CYCLE can be set in a .env
+# file next to this one (see .env.example).
 
 x-app: &app
   build:
@@ -15,11 +18,17 @@ x-app: &app
     DB_NAME: niufoods_orders_docker
     DB_USERNAME: postgres
     DB_PASSWORD: postgres
-    REDIS_URL: redis://redis:6379/0
+    # Redis database 1, not the 0 that bin/dev uses on the host: with their
+    # own queues, neither worker can take jobs whose orders live in the
+    # other PostgreSQL database.
+    REDIS_URL: redis://redis:6379/1
     # The worker reaches the simulated stores through the web service.
     STORE_BASE_URL: http://web:3000/simulated_stores
     ALLOWED_HOSTS: web
     STORE_MODES: ${STORE_MODES:-PROV=ok,LCON=ok,NUNO=ok}
+    # Dispatch settings (see docs/dispatch.md); set them in .env to change them.
+    MAX_ATTEMPTS_PER_CYCLE: ${MAX_ATTEMPTS_PER_CYCLE:-5}
+    DISPATCH_LEASE_SECONDS: ${DISPATCH_LEASE_SECONDS:-60}
 
 services:
   db:
@@ -74,12 +83,16 @@ services:
       timeout: 3s
       retries: 20
 
+  # Starts once web answers: jobs left in Redis from a previous run would
+  # otherwise be delivered to stores that are not listening yet.
   sidekiq:
     <<: *app
     command: ["bundle", "exec", "sidekiq", "-C", "config/sidekiq.yml"]
     depends_on:
       setup:
         condition: service_completed_successfully
+      web:
+        condition: service_healthy
 
 volumes:
   postgres_data:
