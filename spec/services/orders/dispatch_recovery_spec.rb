@@ -70,6 +70,34 @@ RSpec.describe Orders::DispatchRecovery do
     end
   end
 
+  describe "pending orders without attempts left" do
+    # MAX_ATTEMPTS_PER_CYCLE was lowered while these orders had already used
+    # more attempts than the new limit, so no claim will ever take them.
+    before { stub_const("#{described_class}::BATCH_SIZE", 2) }
+
+    let!(:exhausted) do
+      Array.new(3) { |index| order_in("pending", next_dispatch_at: (10 - index).minutes.ago, dispatch_attempts_count: max_attempts + 1) }
+    end
+    let!(:recoverable) { order_in("pending", next_dispatch_at: 1.minute.ago, dispatch_attempts_count: 1) }
+
+    it "does not let them fill the batch and block other orders" do
+      2.times { recover }
+
+      expect(enqueued_ids.uniq).to eq([ recoverable.id ])
+    end
+
+    it "fails them, since no attempt can be made" do
+      expect(recover.failed).to eq(3)
+
+      exhausted.each do |order|
+        expect(order.reload).to have_attributes(
+          dispatch_status: "failed",
+          last_dispatch_error: "no attempts left in the cycle (#{max_attempts + 1} of #{max_attempts}); the limit was lowered"
+        )
+      end
+    end
+  end
+
   it "does not touch dispatched or failed orders" do
     order_in("dispatched", dispatched_at: 1.hour.ago, next_dispatch_at: 1.hour.ago)
     order_in("failed", next_dispatch_at: 1.hour.ago)

@@ -3,9 +3,10 @@ module Orders
   # was down, a retry that could not be scheduled, or a worker that died with
   # the order in its hands. Run periodically by bin/dispatch_recovery.
   #
-  # 1. Orders whose lease expired after the last attempt of their cycle are
-  #    marked as failed, and their token is cleared, so the late result of
-  #    that worker is discarded as stale.
+  # 1. Orders that can no longer be attempted are marked as failed: expired
+  #    leases after the last attempt of the cycle (their token is cleared, so
+  #    the late result of that worker is discarded as stale), and pending
+  #    orders that already used more attempts than a lowered limit allows.
   # 2. Orders still due are enqueued again: pending ones past their
   #    next_dispatch_at by more than the grace period, and expired leases with
   #    attempts left. The grace period leaves room for the scheduled job.
@@ -26,7 +27,7 @@ module Orders
     end
 
     def call
-      failed = fail_exhausted_leases
+      failed = fail_exhausted_leases + fail_exhausted_pending
       order_ids = due_order_ids
       DispatchOrderJob.perform_bulk(order_ids.map { |id| [ id ] }) if order_ids.any?
       Result.new(failed: failed, enqueued: order_ids.size)
@@ -49,12 +50,28 @@ module Orders
         SQL
     end
 
+    # Pending orders only get here with attempts left, unless the limit was
+    # lowered after they were retried; no claim will take them anymore.
+    def fail_exhausted_pending
+      max_attempts = settings.max_attempts_per_cycle
+      Order.dispatch_pending
+           .where("dispatch_attempts_count >= ?", max_attempts)
+           .update_all([ <<~SQL.squish, max_attempts ])
+             dispatch_status = 'failed',
+             last_dispatch_error = 'no attempts left in the cycle (' || dispatch_attempts_count || ' of ' || ? || '); the limit was lowered',
+             updated_at = now()
+           SQL
+    end
+
+    # Only orders the claim can take: with attempts left. Otherwise orders it
+    # always discards could fill every batch and starve the rest.
     def due_order_ids
       overdue = Order.dispatch_pending
                      .where("next_dispatch_at <= now() - make_interval(secs => ?)", settings.recovery_grace_seconds)
-      abandoned = expired_leases.where("dispatch_attempts_count < ?", settings.max_attempts_per_cycle)
 
-      overdue.or(abandoned).order(:next_dispatch_at).limit(BATCH_SIZE).pluck(:id)
+      overdue.or(expired_leases)
+             .where("dispatch_attempts_count < ?", settings.max_attempts_per_cycle)
+             .order(:next_dispatch_at).limit(BATCH_SIZE).pluck(:id)
     end
 
     def expired_leases

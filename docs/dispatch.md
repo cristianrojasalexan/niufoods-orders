@@ -111,12 +111,14 @@ Si al programar el reintento Redis no está disponible, la orden queda igualment
 
 Un despacho puede quedar sin job que lo ejecute: la orden se guardó con Redis caído, un reintento no se pudo programar o un worker murió con la orden tomada. `bin/dispatch_recovery` corre `Orders::DispatchRecovery` cada `DISPATCH_RECOVERY_INTERVAL_SECONDS` (60 s) y hace dos cosas:
 
-1. **Cierra las leases vencidas sin intentos.** Una orden `dispatching` cuya lease venció durante el último intento del ciclo pasa a `failed` con `lease expired during the last attempt (5); delivery result unknown`. También se anula su token, así que si ese worker termina tarde su `UPDATE` no encuentra la fila y su intento queda como `stale`.
+1. **Cierra las órdenes que ya no se pueden intentar:**
+   - una orden `dispatching` cuya lease venció durante el último intento del ciclo pasa a `failed` con `lease expired during the last attempt (5); delivery result unknown`. También se anula su token, así que si ese worker termina tarde su `UPDATE` no encuentra la fila y su intento queda como `stale`;
+   - una orden `pending` que ya usó más intentos de los que permite el límite pasa a `failed`. Solo ocurre si se bajó `MAX_ATTEMPTS_PER_CYCLE` mientras tenía reintentos programados; ningún claim la volvería a tomar.
 2. **Vuelve a encolar lo que corresponde:**
    - órdenes `pending` cuyo próximo intento quedó atrás hace más de `DISPATCH_RECOVERY_GRACE_SECONDS` (30 s). El margen deja tiempo para que corra el job programado normalmente;
    - órdenes `dispatching` con la lease vencida y con intentos disponibles.
 
-   Las más antiguas van primero, en lotes de 500.
+   Las más antiguas van primero, en lotes de 500, y solo entran órdenes **con intentos disponibles**. Si entraran órdenes que el claim siempre descarta, podrían ocupar el lote completo en cada ronda y dejar fuera a las demás.
 
 **Es seguro encolar de más.** Si la recuperación encola una orden que todavía no corresponde, o que ya tiene un job en camino, el claim lo descarta: vuelve a verificar en PostgreSQL que la orden esté vencida y que le queden intentos. La recuperación se puede correr varias veces sin efectos duplicados.
 
