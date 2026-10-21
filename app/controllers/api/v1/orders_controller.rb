@@ -17,7 +17,7 @@ module Api
           render json: OrderSerializer.new(result.order).as_json,
                  status: :created, location: api_v1_order_url(result.order)
         else
-          render json: { errors: result.errors.map(&:to_h) }, status: :unprocessable_content
+          render_errors(:unprocessable_content, result.errors)
         end
       end
 
