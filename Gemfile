@@ -53,7 +53,7 @@ end
 
 group :test do
   # One-liner matchers for validations and associations [https://github.com/thoughtbot/shoulda-matchers]
-  gem "shoulda-matchers", "~> 7.0"
+  gem "shoulda-matchers", "~> 8.0"
   # Stub outgoing HTTP calls (e.g. dispatches to stores) [https://github.com/bblimke/webmock]
   gem "webmock", "~> 3.34"
 end
