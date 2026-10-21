@@ -10,9 +10,23 @@
 #
 # It's strongly recommended that you check this file into your version control system.
 
-ActiveRecord::Schema[8.1].define(version: 2026_10_21_191131) do
+ActiveRecord::Schema[8.1].define(version: 2026_10_21_194330) do
   # These are extensions that must be enabled in order to support this database
   enable_extension "pg_catalog.plpgsql"
+
+  create_table "dispatch_attempts", force: :cascade do |t|
+    t.bigint "order_id", null: false
+    t.integer "dispatch_cycle", null: false
+    t.integer "attempt_number", null: false
+    t.uuid "dispatch_token", null: false
+    t.string "outcome", null: false
+    t.integer "http_status"
+    t.string "error_message"
+    t.integer "duration_ms", null: false
+    t.datetime "created_at", null: false
+    t.index ["order_id"], name: "index_dispatch_attempts_on_order_id"
+    t.check_constraint "outcome::text = ANY (ARRAY['success'::character varying, 'transient'::character varying, 'permanent'::character varying, 'stale'::character varying]::text[])", name: "dispatch_attempts_outcome_valid"
+  end
 
   create_table "order_items", force: :cascade do |t|
     t.bigint "order_id", null: false
@@ -41,10 +55,24 @@ ActiveRecord::Schema[8.1].define(version: 2026_10_21_191131) do
     t.datetime "updated_at", null: false
     t.string "idempotency_key"
     t.string "request_fingerprint"
+    t.string "dispatch_status", default: "pending", null: false
+    t.integer "dispatch_cycle", default: 1, null: false
+    t.integer "dispatch_attempts_count", default: 0, null: false
+    t.datetime "next_dispatch_at", default: -> { "CURRENT_TIMESTAMP" }, null: false
+    t.uuid "dispatch_token"
+    t.datetime "dispatch_lease_expires_at"
+    t.datetime "dispatched_at"
+    t.string "last_dispatch_error"
     t.index ["created_at"], name: "index_orders_on_created_at"
+    t.index ["dispatch_status", "next_dispatch_at"], name: "index_orders_on_dispatch_due", where: "((dispatch_status)::text = ANY ((ARRAY['pending'::character varying, 'dispatching'::character varying])::text[]))"
+    t.index ["dispatch_status"], name: "index_orders_on_dispatch_status"
     t.index ["idempotency_key"], name: "index_orders_on_idempotency_key", unique: true, where: "(idempotency_key IS NOT NULL)"
     t.index ["number"], name: "index_orders_on_number", unique: true
     t.index ["restaurant_id"], name: "index_orders_on_restaurant_id"
+    t.check_constraint "dispatch_attempts_count >= 0", name: "orders_dispatch_attempts_non_negative"
+    t.check_constraint "dispatch_status::text <> 'dispatched'::text OR dispatched_at IS NOT NULL", name: "orders_dispatched_has_timestamp"
+    t.check_constraint "dispatch_status::text <> 'dispatching'::text OR dispatch_token IS NOT NULL AND dispatch_lease_expires_at IS NOT NULL", name: "orders_dispatching_has_lease"
+    t.check_constraint "dispatch_status::text = ANY (ARRAY['pending'::character varying, 'dispatching'::character varying, 'dispatched'::character varying, 'failed'::character varying]::text[])", name: "orders_dispatch_status_valid"
     t.check_constraint "idempotency_key IS NULL OR request_fingerprint IS NOT NULL", name: "orders_idempotency_key_has_fingerprint"
     t.check_constraint "order_type::text <> 'delivery'::text OR delivery_address IS NOT NULL", name: "orders_delivery_requires_address"
     t.check_constraint "order_type::text = ANY (ARRAY['pickup'::character varying, 'delivery'::character varying]::text[])", name: "orders_order_type_valid"
@@ -88,6 +116,7 @@ ActiveRecord::Schema[8.1].define(version: 2026_10_21_191131) do
     t.check_constraint "received_at IS NULL OR payload IS NOT NULL", name: "simulated_store_requests_receipt_has_payload"
   end
 
+  add_foreign_key "dispatch_attempts", "orders"
   add_foreign_key "order_items", "orders"
   add_foreign_key "order_items", "products"
   add_foreign_key "orders", "restaurants"

@@ -1,0 +1,5 @@
+# Sidekiq connects to REDIS_URL (redis://localhost:6379/0 by default).
+:concurrency: 5
+:queues:
+  - dispatch
+  - default

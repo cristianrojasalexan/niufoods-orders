@@ -55,6 +55,37 @@ RSpec.describe Orders::Create do
     end
   end
 
+  describe "dispatch" do
+    it "enqueues the dispatch of a new order" do
+      result = call
+
+      expect(DispatchOrderJob.jobs.map { |job| job["args"] }).to eq([ [ result.order.id ] ])
+    end
+
+    it "enqueues the job only after the enclosing transaction commits" do
+      ActiveRecord::Base.transaction(requires_new: true) do
+        call
+        expect(DispatchOrderJob.jobs).to be_empty
+      end
+
+      expect(DispatchOrderJob.jobs.size).to eq(1)
+    end
+
+    it "does not enqueue anything for invalid requests or retries" do
+      described_class.call(payload, idempotency_key: "retry-1")
+      DispatchOrderJob.clear
+
+      call("delivery_address" => nil)
+      described_class.call(payload, idempotency_key: "retry-1")
+
+      expect(DispatchOrderJob.jobs).to be_empty
+    end
+
+    it "leaves new orders pending" do
+      expect(call.order).to have_attributes(dispatch_status: "pending", dispatch_attempts_count: 0)
+    end
+  end
+
   it "accepts keys as symbols" do
     expect(described_class.call(payload.deep_symbolize_keys)).to be_success
   end

@@ -8,6 +8,7 @@ API central para recibir, validar, persistir y despachar órdenes a los restaura
 
 - [Arquitectura, modelo de datos y flujo de una orden](docs/architecture.md)
 - [API de órdenes: contrato, validaciones y errores](docs/api.md)
+- [Despacho a tienda: claim, lease y clasificación de errores](docs/dispatch.md)
 - [Tiendas simuladas: recepción, deduplicación y modos](docs/simulated_stores.md)
 
 ## Stack
@@ -15,7 +16,7 @@ API central para recibir, validar, persistir y despachar órdenes a los restaura
 - Ruby 3.4 / Rails 8.1
 - PostgreSQL
 - Tailwind CSS + Hotwire
-- Redis
+- Redis + Sidekiq
 
 ## Servicios de infraestructura
 
@@ -27,6 +28,12 @@ bin/rails db:prepare
 ```
 
 `db:prepare` crea la base, corre las migraciones y, si la base es nueva, carga las seeds. Las seeds se pueden volver a correr cuando quieras con `bin/rails db:seed`: cargan el dataset de la prueba (`db/data/restaurants.json` y `db/data/products.json`) con sus IDs originales y nunca duplican registros.
+
+Para ejecutar la app con el worker que despacha las órdenes:
+
+```bash
+bin/dev    # servidor web, Tailwind y Sidekiq
+```
 
 Las credenciales por defecto de `config/database.yml` coinciden con el servicio `db`. Para cambiarlas, copia `.env.example` y ajusta las variables `DB_*`.
 

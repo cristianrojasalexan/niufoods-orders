@@ -17,6 +17,12 @@ class OrderSerializer
       items: order.order_items.map { |item| item_json(item) },
       total_amount: order.total_amount,
       currency: "CLP",
+      dispatch: {
+        status: order.dispatch_status,
+        attempts: order.dispatch_attempts_count,
+        dispatched_at: order.dispatched_at&.iso8601,
+        last_error: order.last_dispatch_error
+      },
       created_at: order.created_at.iso8601
     }
   end

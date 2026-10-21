@@ -79,12 +79,20 @@ module Orders
     # the race for the key.
     def save(order, fingerprint)
       Order.transaction(requires_new: true) { order.save! }
+      enqueue_dispatch(order)
       Result.new(status: :created, order: order, errors: [])
     rescue ActiveRecord::RecordNotUnique => e
       raise unless idempotency_key && (winner = previous_order)
 
       Rails.logger.info("Idempotency-Key #{idempotency_key} was taken by a concurrent request (#{e.class})")
       replay_or_conflict(winner, fingerprint)
+    end
+
+    # Enqueued only once the order is committed, so the worker never looks for
+    # an order that does not exist yet, even if this runs inside a larger
+    # transaction.
+    def enqueue_dispatch(order)
+      ActiveRecord.after_all_transactions_commit { DispatchOrderJob.perform_async(order.id) }
     end
 
     def previous_order

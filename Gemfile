@@ -16,8 +16,11 @@ gem "turbo-rails"
 gem "stimulus-rails"
 # Use Tailwind CSS [https://github.com/rails/tailwindcss-rails]
 gem "tailwindcss-rails"
-# Use Redis adapter to run Action Cable in production
-# gem "redis", ">= 4.0.1"
+# Background jobs: dispatches orders to the stores [https://sidekiq.org]
+gem "sidekiq", "~> 8.1"
+
+# HTTP client used to deliver orders to the stores [https://lostisland.github.io/faraday]
+gem "faraday", "~> 2.15"
 
 # Use Active Model has_secure_password [https://guides.rubyonrails.org/active_model_basics.html#securepassword]
 # gem "bcrypt", "~> 3.1.7"

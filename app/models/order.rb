@@ -5,8 +5,13 @@ class Order < ApplicationRecord
   belongs_to :restaurant
   has_many :order_items, dependent: :destroy, inverse_of: :order, autosave: true
   has_many :products, through: :order_items
+  has_many :dispatch_attempts, -> { order(:id) }, dependent: :delete_all, inverse_of: :order
 
   enum :order_type, { pickup: "pickup", delivery: "delivery" }, validate: true
+  # Written by Orders::Dispatcher with conditional SQL updates, never by
+  # assigning it on a loaded order.
+  enum :dispatch_status, { pending: "pending", dispatching: "dispatching", dispatched: "dispatched", failed: "failed" },
+       prefix: :dispatch
 
   normalizes :customer_name, :delivery_address, with: ->(value) { value.strip.presence }
   normalizes :customer_phone, with: ->(value) { value.gsub(/[\s\-()]/, "") }
