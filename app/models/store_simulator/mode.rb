@@ -22,9 +22,12 @@ module StoreSimulator
       find_by(store_code: store_code)&.mode || defaults.fetch(store_code, DEFAULT)
     end
 
+    # A single upsert, so concurrent first changes of the same store do not
+    # race to insert it. The mode is validated before writing.
     def self.change!(store_code, mode)
-      record = find_or_initialize_by(store_code: store_code)
-      record.update!(mode: mode)
+      record = new(store_code: store_code, mode: mode)
+      record.validate!
+      upsert({ store_code: store_code, mode: mode }, unique_by: :store_code)
       record
     end
 
