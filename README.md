@@ -1,55 +1,343 @@
 # Niufoods Orders
 
-API central para recibir, validar, persistir y despachar órdenes a los restaurantes de la franquicia, con un dashboard para revisarlas.
+API central en Ruby on Rails que recibe las órdenes de los canales digitales de la franquicia, las valida, las guarda en PostgreSQL y las despacha por HTTP a la tienda que debe prepararlas. El despacho corre en segundo plano con Sidekiq, con reintentos y estado de despacho. Un dashboard permite revisar las órdenes y su despacho.
 
-> 🚧 En construcción. La documentación completa (arquitectura, flujo de órdenes, instalación y ejemplos de uso) se irá agregando a medida que avance la solución.
+**Resultado esperado de la prueba, de punta a punta:** una orden válida entra por `POST /api/v1/orders`, queda registrada con su total calculado en el servidor, se asocia a su restaurante, se despacha a la tienda de ese restaurante y aparece en el dashboard con su estado de despacho.
 
-## Documentación
+![Dashboard de órdenes](docs/images/dashboard.png)
 
-- [Arquitectura, modelo de datos y flujo de una orden](docs/architecture.md)
-- [API de órdenes: contrato, validaciones y errores](docs/api.md)
-- [Despacho a tienda: claim, lease, reintentos y recuperación](docs/dispatch.md)
-- [Tiendas simuladas: recepción, deduplicación y modos](docs/simulated_stores.md)
-- [Simulación de órdenes y escenarios de demo del despacho](docs/simulation.md)
+## Contenido
 
-## Stack
+- [Probar la solución en 5 minutos](#probar-la-solución-en-5-minutos)
+- [Cumplimiento de la prueba](#cumplimiento-de-la-prueba)
+- [Arquitectura en breve](#arquitectura-en-breve)
+- [Uso de la API](#uso-de-la-api)
+- [Simulación y tiendas simuladas](#simulación-y-tiendas-simuladas)
+- [Dashboard](#dashboard)
+- [Instalación y configuración](#instalación-y-configuración)
+- [Decisiones técnicas](#decisiones-técnicas)
+- [Tests, lint y CI](#tests-lint-y-ci)
+- [Estructura del proyecto](#estructura-del-proyecto)
+- [Historial de commits](#historial-de-commits)
+- [Limitaciones y trabajo futuro](#limitaciones-y-trabajo-futuro)
 
-- Ruby 3.4 / Rails 8.1
-- PostgreSQL
-- Tailwind CSS + Hotwire
-- Redis + Sidekiq
+**Documentación detallada** en [`docs/`](docs):
 
-## Ejecución con Docker
+| Documento | Contenido |
+|---|---|
+| [Arquitectura](docs/architecture.md) | Diagrama de componentes, modelo de datos (ERD) y flujo completo de una orden. |
+| [API de órdenes](docs/api.md) | Contrato, validaciones, idempotencia, códigos de respuesta y de error. |
+| [Despacho a tienda](docs/dispatch.md) | Estados, claim atómico con lease, reintentos, recuperación, reintento manual y configuración. |
+| [Tiendas simuladas](docs/simulated_stores.md) | Recepción, deduplicación atómica y modos de falla. |
+| [Simulación](docs/simulation.md) | Script de simulación de órdenes y escenarios de demo del despacho. |
 
-Levanta todo (PostgreSQL, Redis, la app, el worker de Sidekiq y la recuperación de despachos) con un solo comando:
+## Probar la solución en 5 minutos
+
+Requisitos: **Docker** con Docker Compose y **Ruby 3.x** en la máquina, solo para los dos scripts (usan únicamente la librería estándar, sin gemas).
+
+```bash
+git clone https://github.com/cristianrojasalexan/niufoods-orders.git
+cd niufoods-orders
+docker compose up --build        # PostgreSQL, Redis, app, Sidekiq y recuperación
+```
+
+El primer build tarda varios minutos. Cuando `web` responde, en otra terminal:
+
+```bash
+# 1. Generar órdenes desde los "canales digitales" (24 válidas y 6 inválidas a propósito)
+ruby script/simulate_orders.rb --count 30 --seed 42
+
+# 2. Ver el despacho en cuatro escenarios controlados: ok, inestable, rechazo y tienda caída (~1 minuto)
+ruby script/demo_scenarios.rb
+```
+
+Después abre:
+
+| URL | Qué hay |
+|---|---|
+| http://localhost:3000 | Dashboard de órdenes, con filtro por estado y detalle de cada orden. |
+| http://localhost:3000/sidekiq | Colas, reintentos programados y procesos de Sidekiq. |
+| http://localhost:3000/simulated_stores/LCON/orders | Lo que recibió la tienda de Las Condes. |
+
+Sin Ruby en la máquina, los mismos scripts corren dentro del contenedor: `docker compose exec web ruby script/simulate_orders.rb` (y lo mismo con `script/demo_scenarios.rb`).
+
+Las dos ejecuciones terminan con código de salida `0`: todas las respuestas son las esperadas y los cuatro escenarios pasan. Esta secuencia se verificó desde un clon limpio del repositorio con volúmenes vacíos.
+
+Para empezar de cero: `docker compose down -v && docker compose up --build`.
+
+## Cumplimiento de la prueba
+
+| Requisito del enunciado | Dónde se cumple |
+|---|---|
+| **1. Diagrama y diseño de datos** | |
+| Diagrama del flujo canal → API Rails → PostgreSQL → tienda, con Sidekiq | [Componentes](docs/architecture.md#componentes) y [diagrama de secuencia](docs/architecture.md#flujo-de-una-orden), en Mermaid |
+| Base de datos con restaurantes, productos, órdenes e ítems | [Modelo de datos](docs/architecture.md#modelo-de-datos) (ERD), `db/schema.rb`; además `dispatch_attempts` para auditar cada intento |
+| **2. API** | |
+| Endpoint para crear una orden con JSON | `POST /api/v1/orders` → `Api::V1::OrdersController#create`; acepta exactamente el payload de referencia |
+| Validaciones de modelo y strong params | `Order` y `OrderItem` (presencia, enums, formatos, rangos) + strong params (`require` / `permit`, sin descartar en silencio valores con forma incorrecta); además `CHECK`, `NOT NULL` y claves foráneas en PostgreSQL |
+| Restaurante, tipo de pedido, productos y cantidades | `restaurant_id`, `order_type` (`pickup` / `delivery`), `items[].product_id` y `items[].quantity` |
+| Total calculado en el servidor, sin confiar en el cliente | `Orders::Create` y `Order#calculate_total_amount` usan los precios de la base; un `total_amount` enviado solo se compara (`422 total_mismatch`) |
+| Orden e ítems persistidos en PostgreSQL | Una sola transacción; el precio unitario queda congelado en cada ítem |
+| Despacho a la tienda correspondiente | `DispatchOrderJob` → `Orders::Dispatcher`: `POST` al `dispatch_url` del restaurante de la orden |
+| Errores de validación y fallos de entrega; reintentos y estado de despacho | Errores `{field, code, message}` con 400/404/409/422; estado `pending` → `dispatching` → `dispatched` / `failed`; reintentos con espera exponencial, límite por ciclo, recuperación y reintento manual ([despacho](docs/dispatch.md)) |
+| **3. Simulación** | |
+| Script en Ruby que genera órdenes con el dataset y las envía a la API | `script/simulate_orders.rb`, que lee `db/data/*.json` |
+| Uno o más productos, cantidades variables, distintos restaurantes, retiro y delivery | De 1 a 5 productos, cantidades de 1 a 4, los 3 restaurantes y ambos tipos |
+| Maneja respuestas exitosas y errores de validación | 7 tipos de orden inválida a propósito, resumen final y código de salida |
+| Simulación de la recepción en tienda | Endpoint `POST /simulated_stores/:code/orders` con modos `ok`, `flaky:N`, `reject` y `down` |
+| **4. Visualización** | |
+| N° de orden, tienda, monto total, Retiro/Delivery, fecha/hora de creación y estado de despacho | Dashboard en `/`, con paginación y filtro por estado |
+| Opcional: productos, cantidades y cliente al seleccionar una orden | Detalle en `/orders/:id`, con los intentos de despacho y el botón "Reintentar despacho" |
+| **5. Dataset** | `db/data/products.json` y `db/data/restaurants.json` con los IDs del enunciado; seeds idempotentes |
+| **6. Documentación y entrega** | |
+| Diagrama de arquitectura y diseño de base de datos | [docs/architecture.md](docs/architecture.md) |
+| Flujo completo: recepción, validación, persistencia y despacho | [Flujo de una orden](docs/architecture.md#flujo-de-una-orden) y [docs/dispatch.md](docs/dispatch.md) |
+| Script de simulación y tienda simulada | [docs/simulation.md](docs/simulation.md) y [docs/simulated_stores.md](docs/simulated_stores.md) |
+| Instalación, configuración y ejecución | [Instalación y configuración](#instalación-y-configuración) |
+| README con ejemplos de la API y decisiones técnicas | [Uso de la API](#uso-de-la-api) y [Decisiones técnicas](#decisiones-técnicas) |
+| Historial de commits que muestre la evolución | [Historial de commits](#historial-de-commits) |
+
+## Arquitectura en breve
+
+```mermaid
+flowchart LR
+    channel["Canal digital<br/>o script de simulación"] -- "POST /api/v1/orders" --> api["API Rails<br/>Orders::Create"]
+    api -- "orden + ítems<br/>(una transacción)" --> pg[("PostgreSQL")]
+    api -. "encola tras el commit" .-> redis[("Redis")]
+    redis -. "job" .-> worker["Sidekiq<br/>Orders::Dispatcher"]
+    worker -- "claim, intentos<br/>y resultado" --> pg
+    worker == "POST + Idempotency-Key" ==> store["Tienda del restaurante<br/>(simulada)"]
+    recovery["bin/dispatch_recovery"] -- "despachos sin job" --> pg
+    recovery -. "reencola" .-> redis
+    dash["Dashboard"] -- "lee" --> pg
+
+    classDef rails fill:#fbe3e3,stroke:#cc342d,color:#5c1411
+    classDef storage fill:#e3ecf7,stroke:#336791,color:#13304d
+    classDef job fill:#fff1dc,stroke:#d9822b,color:#5a3200
+    classDef ext fill:#e6f4ea,stroke:#2e7d4f,color:#123d24
+    class api,dash rails
+    class pg,redis storage
+    class worker,recovery job
+    class channel,store ext
+```
+
+1. **Recepción y validación.** El controlador filtra el payload con strong params. `Orders::Create` valida tipos, catálogo y reglas de negocio, y calcula el total con los precios de PostgreSQL.
+2. **Persistencia.** La orden y sus ítems se guardan en una sola transacción, con el estado de despacho `pending`.
+3. **Encolado.** El job se encola después del commit. Si Redis falla, la orden queda `pending` y `bin/dispatch_recovery` la encola cuando Redis vuelve.
+4. **Despacho.** El worker reclama la orden en PostgreSQL con un `UPDATE` atómico, la envía a la tienda y registra el intento. Un error transitorio (5xx, 408, 425, 429, timeout) se reintenta con espera exponencial hasta 5 intentos por ciclo. Uno permanente (otros 4xx) la deja `failed`, y se puede reintentar desde el dashboard.
+
+El detalle, con el diagrama completo de componentes, el ERD y el diagrama de secuencia, está en [docs/architecture.md](docs/architecture.md).
+
+## Uso de la API
+
+Ejemplos reales contra el stack de `docker compose`. El contrato completo y todos los códigos de error están en [docs/api.md](docs/api.md).
+
+**Crear una orden** con el payload de referencia del enunciado. `Idempotency-Key` es opcional:
+
+```bash
+curl -i -X POST http://localhost:3000/api/v1/orders \
+  -H 'Content-Type: application/json' \
+  -H 'Idempotency-Key: demo-ana-001' \
+  -d '{"restaurant_id":2,"order_type":"delivery","customer":{"name":"Ana Pérez","phone":"+56912345678"},"delivery_address":"Av. Providencia 1234, Santiago","items":[{"product_id":1,"quantity":2},{"product_id":5,"quantity":1}]}'
+```
+
+```
+HTTP/1.1 201 Created
+Location: http://localhost:3000/api/v1/orders/1
+```
+
+```json
+{
+  "id": 1,
+  "number": "LCON-000001",
+  "restaurant": { "id": 2, "code": "LCON", "name": "Niu Foods Las Condes" },
+  "order_type": "delivery",
+  "customer": { "name": "Ana Pérez", "phone": "+56912345678" },
+  "delivery_address": "Av. Providencia 1234, Santiago",
+  "items": [
+    { "product_id": 1, "sku": "SKU-001", "name": "Niu Roll Salmón", "quantity": 2, "unit_price": 8990, "subtotal": 17980 },
+    { "product_id": 5, "sku": "SKU-005", "name": "Gyozas de Pollo x5", "quantity": 1, "unit_price": 4490, "subtotal": 4490 }
+  ],
+  "total_amount": 22470,
+  "currency": "CLP",
+  "dispatch": { "status": "pending", "attempts": 0, "dispatched_at": null, "last_error": null },
+  "created_at": "2026-10-22T12:15:37Z"
+}
+```
+
+**Consultar la orden.** Unos segundos después ya está despachada:
+
+```bash
+curl http://localhost:3000/api/v1/orders/1
+```
+
+```json
+"dispatch": { "status": "dispatched", "attempts": 1, "dispatched_at": "2026-10-22T12:15:40Z", "last_error": null }
+```
+
+**Reintentar con la misma `Idempotency-Key`.** Repetir exactamente el mismo comando devuelve la misma orden, sin crear otra:
+
+```
+HTTP/1.1 200 OK
+Idempotent-Replayed: true
+```
+
+**Misma clave con otra solicitud** (por ejemplo, `quantity` 3 en vez de 2):
+
+```
+HTTP/1.1 409 Conflict
+{"errors":[{"field":null,"code":"idempotency_conflict","message":"the Idempotency-Key was already used with a different request"}]}
+```
+
+**Errores de validación.** Todos usan la misma forma, con el campo en los términos del request:
+
+```bash
+# Producto inexistente
+curl -s -X POST http://localhost:3000/api/v1/orders -H 'Content-Type: application/json' \
+  -d '{"restaurant_id":2,"order_type":"pickup","customer":{"name":"Ana Pérez","phone":"+56912345678"},"items":[{"product_id":1,"quantity":2},{"product_id":99,"quantity":1}]}'
+# 422 {"errors":[{"field":"items[1].product_id","code":"not_found","message":"does not exist"}]}
+
+# Cantidad decimal: se rechaza, nunca se trunca
+curl -s -X POST http://localhost:3000/api/v1/orders -H 'Content-Type: application/json' \
+  -d '{"restaurant_id":2,"order_type":"pickup","customer":{"name":"Ana Pérez","phone":"+56912345678"},"items":[{"product_id":5,"quantity":2.5}]}'
+# 422 {"errors":[{"field":"items[0].quantity","code":"invalid_quantity","message":"must be an integer between 1 and 99"}]}
+
+# Delivery sin dirección
+curl -s -X POST http://localhost:3000/api/v1/orders -H 'Content-Type: application/json' \
+  -d '{"restaurant_id":2,"order_type":"delivery","customer":{"name":"Ana Pérez","phone":"+56912345678"},"items":[{"product_id":1,"quantity":2}]}'
+# 422 {"errors":[{"field":"delivery_address","code":"blank","message":"can't be blank"}]}
+
+# Total informado por el cliente que no coincide con el calculado
+curl -s -X POST http://localhost:3000/api/v1/orders -H 'Content-Type: application/json' \
+  -d '{"restaurant_id":2,"order_type":"pickup","customer":{"name":"Ana Pérez","phone":"+56912345678"},"items":[{"product_id":1,"quantity":2},{"product_id":5,"quantity":1}],"total_amount":10000}'
+# 422 {"errors":[{"field":"total_amount","code":"total_mismatch","message":"does not match the calculated total of 22470"}]}
+
+# JSON mal formado
+curl -s -X POST http://localhost:3000/api/v1/orders -H 'Content-Type: application/json' -d '{"restaurant_id":'
+# 400 {"errors":[{"field":null,"code":"malformed_json","message":"the request body is not valid JSON"}]}
+```
+
+| Status | Cuándo |
+|---|---|
+| `201 Created` | Orden creada. |
+| `200 OK` | Consulta, o reintento con la misma `Idempotency-Key` y la misma solicitud. |
+| `400 Bad Request` | JSON inválido, body vacío o `Idempotency-Key` mal formada. |
+| `404 Not Found` | La orden no existe. |
+| `409 Conflict` | La `Idempotency-Key` ya se usó con otra solicitud. |
+| `422 Unprocessable Content` | La orden no cumple las reglas. |
+
+## Simulación y tiendas simuladas
+
+**`script/simulate_orders.rb`** simula los canales digitales. Está escrito en Ruby puro y habla con la API por HTTP, como cualquier cliente externo. Genera órdenes con el dataset de la prueba (de 1 a 5 productos, cantidades de 1 a 4, los 3 restaurantes, retiro y delivery) y mezcla órdenes inválidas a propósito: producto inexistente, cantidad 0 o 2.5, delivery sin dirección, total manipulado, restaurante inexistente y orden sin productos. Para cada orden verifica que la respuesta sea la esperada (201 o 422), informa los errores de red sin detenerse y termina con un resumen.
+
+```
+$ ruby script/simulate_orders.rb --count 30 --seed 42
+...
+Orders sent:             30
+Created (201):           24
+Invalid on purpose:      6 (rejected with 422: 6)
+Network errors:          0
+Unexpected answers:      0
+Created by restaurant:   LCON=6, NUNO=11, PROV=7
+Created by order type:   delivery=12, pickup=12
+Total amount created:    $1146940
+```
+
+**Tiendas simuladas.** Cada restaurante tiene un `dispatch_url` que apunta a `POST /simulated_stores/:code/orders`. Es un endpoint aislado dentro de la misma app, que no usa los modelos de órdenes y guarda su propio estado. Deduplica por `Idempotency-Key` (el número de orden) de forma atómica, así que un reintento nunca se recibe dos veces. Su comportamiento se cambia en caliente:
+
+```bash
+curl -X PUT http://localhost:3000/simulated_stores/LCON/mode -H 'Content-Type: application/json' -d '{"mode":"flaky:2"}'
+```
+
+| Modo | Respuesta de la tienda |
+|---|---|
+| `ok` | `201` y la orden queda recibida (`200 duplicate` si ya la tenía). |
+| `flaky:N` | `503` en los primeros N intentos de cada orden; después la acepta. |
+| `reject` | `422` (error permanente: la orden queda `failed`). |
+| `down` | `503` siempre (se agotan los intentos y la orden queda `failed`). |
+
+**`script/demo_scenarios.rb`** corre un escenario por modo y compara lo esperado con lo obtenido: el estado, los intentos y lo que registró la tienda. Restaura el modo original de la tienda al terminar, aunque algo falle o se interrumpa con Ctrl-C.
+
+```
+Store mode  Expected                Got                     Store received    Result
+----------  ----------------------  ----------------------  ----------------  ------
+ok          dispatched, 1 attempt   dispatched, 1 attempt   yes (1 request)   PASS
+flaky:2     dispatched, 3 attempts  dispatched, 3 attempts  yes (3 requests)  PASS
+reject      failed, 1 attempt       failed, 1 attempt       no (1 request)    PASS
+down        failed, 5 attempts      failed, 5 attempts      no (5 requests)   PASS
+```
+
+Más detalle en [docs/simulation.md](docs/simulation.md) y [docs/simulated_stores.md](docs/simulated_stores.md).
+
+## Dashboard
+
+- **`/`**: tabla con N° de orden, tienda, total en CLP, tipo (Retiro / Delivery), fecha y hora de creación en hora de Santiago y estado de despacho (Pendiente / Enviando / Enviada / Error), con la cantidad de intentos cuando hubo reintentos. Las tarjetas superiores muestran el conteo por estado y sirven de filtro. Pagina de a 25 órdenes con Pagy.
+- **`/orders/:id`**: productos con cantidad, precio unitario y subtotal; datos del cliente y dirección; y cada intento de despacho agrupado por ciclo, con resultado, código HTTP, duración y error.
+- **Reintentar despacho**: el botón aparece solo en órdenes `failed` y abre un ciclo nuevo de intentos. Varios clics, o un clic desde una página desactualizada, nunca abren más de un ciclo.
+
+![Detalle de una orden con sus intentos de despacho](docs/images/order-detail.png)
+
+## Instalación y configuración
+
+### Con Docker (recomendado)
 
 ```bash
 docker compose up --build
 ```
 
-- La app queda en http://localhost:3000: el dashboard de órdenes en `/`, la API en `/api/v1`, las tiendas simuladas en `/simulated_stores` y Sidekiq en `/sidekiq`.
-- Orden de arranque: `setup` prepara la base y carga las seeds; recién después arranca `web`, y `sidekiq` y `dispatch_recovery` esperan a que `web` responda. Así el primer inicio funciona desde cero y el worker nunca entrega órdenes a tiendas que todavía no escuchan.
-- `web`, `sidekiq` y `dispatch_recovery` se reinician solos si se caen; por ejemplo, Sidekiq termina si arranca sin Redis disponible.
-- Docker usa su propia base (`niufoods_orders_docker`) y su propia base de Redis (`/1`), separadas de las de la ejecución local, para que los workers de un entorno nunca tomen jobs del otro.
-- Variables como `STORE_MODES` o `MAX_ATTEMPTS_PER_CYCLE` se configuran en un archivo `.env` junto a `docker-compose.yml` (ver `.env.example`).
-- El primer build compila las gemas y puede tardar varios minutos; los siguientes reutilizan la caché.
-- Para empezar de cero: `docker compose down -v && docker compose up --build`.
+- Levanta `db` (PostgreSQL 16), `redis` (Redis 7), `setup`, `web`, `sidekiq` y `dispatch_recovery`.
+- **Orden de arranque garantizado:** `setup` corre `db:prepare` y `db:seed` cuando `db` y `redis` están sanos. `web` arranca cuando `setup` termina bien, y `sidekiq` y `dispatch_recovery` cuando `web` responde. Así el primer inicio funciona desde cero.
+- `web`, `sidekiq` y `dispatch_recovery` se reinician solos si se caen.
+- Docker usa su propia base (`niufoods_orders_docker`) y la base 1 de Redis, separadas de las de la ejecución local.
+- Los reintentos usan una base de 2 s (`DISPATCH_RETRY_BASE_SECONDS=2`) para poder verlos en vivo: una tienda caída agota sus 5 intentos en menos de un minuto.
 
-## Ejecución local, sin Docker para la app
+### Local, sin Docker para la app
 
 Requiere Ruby 3.4.11. PostgreSQL y Redis pueden venir del mismo `docker-compose.yml`:
 
 ```bash
 docker compose up -d --wait db redis
 bin/setup --skip-server   # gemas, base de datos y seeds
-bin/dev                   # servidor web, Tailwind, worker de Sidekiq y recuperación
+bin/dev                   # web, Tailwind, Sidekiq y recuperación (Procfile.dev)
 ```
 
-`db:prepare` crea la base, corre las migraciones y, si la base es nueva, carga las seeds. Las seeds se pueden volver a correr cuando quieras con `bin/rails db:seed`: cargan el dataset de la prueba (`db/data/restaurants.json` y `db/data/products.json`) con sus IDs originales y nunca duplican registros.
+`bin/rails db:seed` se puede correr cuantas veces se quiera: carga el dataset de la prueba con sus IDs originales y nunca duplica registros.
 
-Las credenciales por defecto de `config/database.yml` coinciden con el servicio `db`. Para cambiarlas, copia `.env.example` y ajusta las variables `DB_*`.
+No corras `bin/dev` y el `web` de Docker al mismo tiempo, porque los dos usan el puerto 3000.
 
-## Tests y lint
+### Variables de entorno
+
+Todas tienen un valor por defecto que funciona. Para cambiarlas, copia `.env.example` a `.env`.
+
+| Variable | Default | Uso |
+|---|---|---|
+| `DB_HOST`, `DB_PORT`, `DB_USERNAME`, `DB_PASSWORD` | `localhost`, `5432`, `postgres`, `postgres` | Conexión a PostgreSQL. |
+| `REDIS_URL` | `redis://localhost:6379/0` | Redis de Sidekiq. |
+| `STORE_BASE_URL` | `http://localhost:3000/simulated_stores` | Base de los `dispatch_url` de los restaurantes al cargar las seeds. |
+| `STORE_MODES` | `PROV=ok,LCON=ok,NUNO=ok` | Modo inicial de cada tienda simulada. |
+| `MAX_ATTEMPTS_PER_CYCLE` | `5` | Intentos de despacho por ciclo. |
+| `DISPATCH_RETRY_BASE_SECONDS` | `10` (`2` en `bin/dev` y Docker) | Espera base del backoff exponencial. |
+| `DISPATCH_RETRY_MAX_SECONDS` | `300` | Tope de cualquier espera, incluido `Retry-After`. |
+| `DISPATCH_LEASE_SECONDS` | `60` | Cuánto tiempo un worker tiene tomada una orden. |
+| `DISPATCH_RECOVERY_INTERVAL_SECONDS`, `DISPATCH_RECOVERY_GRACE_SECONDS` | `60`, `30` | Frecuencia y margen de la recuperación. |
+| `SIDEKIQ_WEB_USER`, `SIDEKIQ_WEB_PASSWORD` | sin valor | Fuera de desarrollo, `/sidekiq` solo se monta con Basic Auth. |
+
+## Decisiones técnicas
+
+- **PostgreSQL decide, Sidekiq ejecuta.** El estado del despacho vive en la orden: intentos, próximo intento y qué worker la tiene tomada. El job solo lleva el `order_id`, y los reintentos automáticos de Sidekiq están desactivados (`retry: false`). Por eso un job duplicado, adelantado o perdido es inofensivo, y se puede auditar y razonar sobre el despacho mirando solo la base.
+- **Claim atómico con lease y token.** Un único `UPDATE ... RETURNING` reclama la orden si corresponde. El resultado se escribe solo si el token sigue vigente: un worker que perdió la lease no pisa el resultado del que tomó su lugar, y su intento queda registrado como `stale`. Nunca hay más de `MAX_ATTEMPTS_PER_CYCLE` intentos por ciclo, aunque los workers mueran una y otra vez.
+- **Entrega at-least-once, recepción exactly-once.** La API envía el número de orden como `Idempotency-Key` y la tienda deduplica. Ningún sistema de colas garantiza exactly-once; la idempotencia en el receptor sí lo logra.
+- **Errores transitorios y permanentes se tratan distinto.** 5xx, 408, 425, 429, timeouts y errores de conexión se reintentan con espera exponencial, respetando `Retry-After`. El resto de los 4xx marca la orden como `failed` de inmediato, porque reintentar no cambiaría la respuesta.
+- **Encolado después del commit, con recuperación.** El worker nunca busca una orden que todavía no existe. Si Redis no está disponible, la API igual responde `201` y la orden se recupera después. Se eligió así en vez de un *transactional outbox* por simplicidad (ver limitaciones).
+- **El total lo calcula el servidor.** Se usan los precios de PostgreSQL, que quedan congelados en cada ítem. `total_amount` es opcional y solo sirve para que el canal confirme su cálculo. Los montos son enteros, porque el CLP no tiene decimales.
+- **Los tipos del JSON se validan antes de convertir.** Una cantidad `2.5`, `"2"` o `null` responde `422`: nunca se trunca con `to_i`, ni se descarta un campo con forma incorrecta en silencio.
+- **Integridad en la base, no solo en Rails.** Claves foráneas, `NOT NULL`, `CHECK` (cantidad positiva, subtotal coherente, estados válidos y sus columnas requeridas) e índices únicos protegen los datos aunque alguien escriba sin pasar por los modelos.
+- **Idempotencia con huella de la solicitud.** La misma clave con la misma solicitud canónica devuelve la orden original (`200`); con otra solicitud, `409`. Las solicitudes simultáneas las resuelve un índice único.
+- **Tienda simulada dentro de la app, pero aislada.** Un servicio aparte, por ejemplo en Sinatra, sumaría otro proceso e imagen sin aportar a la evaluación. El endpoint vive en su propio namespace, no usa los modelos de órdenes y tiene sus propias tablas. En producción bastaría con apuntar `dispatch_url` a la tienda real.
+- **Rails con Hotwire y Tailwind para el dashboard.** Cumple lo pedido sin sumar un frontend SPA aparte, y queda en el mismo deploy.
+- **Fechas:** el dashboard muestra la hora de Santiago (`config.time_zone`), y la API responde en UTC ISO 8601, como se espera de un contrato entre sistemas.
+
+## Tests, lint y CI
 
 ```bash
 bin/ci                 # todo lo de abajo, en el mismo orden que el CI
@@ -59,6 +347,65 @@ bin/brakeman           # análisis estático de seguridad
 bin/bundler-audit      # vulnerabilidades conocidas en las gemas
 ```
 
-Los tests bloquean cualquier llamada HTTP real con WebMock: toda comunicación con las tiendas se stubbea.
+La suite cubre, entre otras cosas:
+- el cálculo de totales y `total_mismatch`;
+- las cantidades inválidas;
+- la idempotencia, también con solicitudes concurrentes en threads;
+- el claim y la lease, incluido un worker obsoleto que no pisa el resultado;
+- la clasificación de respuestas y el límite de intentos;
+- la recuperación;
+- la tienda con recepciones concurrentes;
+- el dashboard y el reintento manual, también con clics concurrentes;
+- los dos scripts, corriendo contra la app real.
 
-En GitHub Actions (`.github/workflows/ci.yml`) cada push a `main` y cada pull request corre los mismos chequeos en jobs paralelos: Brakeman y bundler-audit, la auditoría de importmap, RuboCop y la suite de RSpec con PostgreSQL 16 y Redis 7 como servicios.
+Los tests bloquean cualquier llamada HTTP real con WebMock.
+
+En **GitHub Actions** (`.github/workflows/ci.yml`), cada push a `main` y cada pull request corre en jobs paralelos: Brakeman y bundler-audit, la auditoría de importmap, RuboCop y RSpec con PostgreSQL 16 y Redis 7 como servicios. Dependabot mantiene al día las gemas y las actions.
+
+## Estructura del proyecto
+
+```
+app/
+  controllers/api/v1/          API JSON (crear y consultar órdenes, errores uniformes)
+  controllers/orders_controller.rb       dashboard, detalle y reintento manual
+  controllers/store_simulator/ tiendas simuladas (recepción y modos)
+  services/orders/             Create, RequestFingerprint, Dispatcher, DispatchRetryPolicy,
+                               DispatchRecovery, Redispatch
+  jobs/dispatch_order_job.rb   ejecuta un intento de despacho
+  models/                      Restaurant, Product, Order, OrderItem, DispatchAttempt, StoreSimulator::*
+  serializers/                 representación JSON de la orden
+bin/dispatch_recovery          proceso periódico de recuperación
+db/data/                       dataset del enunciado (productos y restaurantes)
+docs/                          arquitectura, API, despacho, tiendas y simulación
+script/                        simulate_orders.rb y demo_scenarios.rb
+spec/                          modelos, servicios, requests, jobs, integración y scripts
+```
+
+## Historial de commits
+
+El historial muestra cómo se construyó la solución, con commits pequeños en [Conventional Commits](https://www.conventionalcommits.org/) y los tests en verde en cada uno. El orden fue:
+1. base del proyecto e infraestructura;
+2. diseño documentado;
+3. catálogo;
+4. órdenes;
+5. API e idempotencia;
+6. tienda simulada;
+7. despacho con reintentos y recuperación;
+8. scripts;
+9. dashboard;
+10. CI y documentación.
+
+Cada `fix:` que sigue a un `feat:` corrige un hallazgo de revisión de código sobre ese commit. Su mensaje explica el problema y la corrección.
+
+```bash
+git log --reverse --oneline
+```
+
+## Limitaciones y trabajo futuro
+
+- **Autenticación de la API y de las tiendas.** Hoy la API no autentica a los canales. Lo siguiente sería API keys por canal, `Idempotency-Key` con alcance por cliente, y firma HMAC del payload que se envía a cada tienda.
+- **Transactional outbox.** Entre el commit de una orden y el encolado de su job hay una ventana en la que una falla de Redis deja la orden sin job hasta la siguiente ronda de recuperación. Una tabla de eventos escrita en la misma transacción cerraría esa ventana.
+- **Actualización en vivo del dashboard** con Turbo Streams, en vez del botón "Actualizar".
+- **Especificación OpenAPI** generada desde los request specs (por ejemplo, con rswag).
+- **Observabilidad:** métricas de despacho (latencia, tasa de error por tienda) y alertas sobre órdenes `failed`.
+- **Recuperación dentro de Sidekiq** con `sidekiq-cron`, como alternativa al proceso `bin/dispatch_recovery`.

@@ -2,7 +2,7 @@
 
 Este documento describe los componentes del sistema, el modelo de datos y el recorrido de una orden desde que llega por la API hasta que la recibe la tienda.
 
-> Este es el diseño con el que arranca la implementación. Se actualiza a medida que se construye cada parte.
+> Describe la solución tal como quedó implementada. El detalle del despacho (claim, reintentos, recuperación y reintento manual) está en [Despacho a tienda](dispatch.md).
 
 - [Componentes](#componentes)
 - [Modelo de datos](#modelo-de-datos)
