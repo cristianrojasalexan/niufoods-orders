@@ -157,6 +157,25 @@ RSpec.describe "API v1 orders", type: :request do
       expect(json).to eq(first)
     end
 
+    it "replays an order with the same number of queries, however many products it has" do
+      products = create_list(:product, 8)
+      large = payload.merge(items: [ roll, gyozas, *products ].map { |product| { product_id: product.id, quantity: 1 } })
+      post_with_key("small")
+      post_with_key("large", large)
+
+      queries = %w[small large].to_h do |key|
+        count = 0
+        counter = ->(*, event) { count += 1 unless event[:name].in?([ "SCHEMA", "TRANSACTION" ]) || event[:cached] }
+        ActiveSupport::Notifications.subscribed(counter, "sql.active_record") do
+          post_with_key(key, key == "small" ? payload : large)
+        end
+        expect(response).to have_http_status(:ok)
+        [ key, count ]
+      end
+
+      expect(queries["large"]).to eq(queries["small"])
+    end
+
     it "returns 409 when the key is reused with a different request" do
       post_with_key("order-123")
       post_with_key("order-123", payload.merge(order_type: "pickup"))

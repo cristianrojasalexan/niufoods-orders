@@ -384,5 +384,6 @@ git log --reverse --oneline
 - **Transactional outbox.** Entre el commit de una orden y el encolado de su job hay una ventana en la que una falla de Redis deja la orden sin job hasta la siguiente ronda de recuperación. Una tabla de eventos escrita en la misma transacción cerraría esa ventana.
 - **Actualización en vivo del dashboard** con Turbo Streams, en vez del botón "Actualizar".
 - **Especificación OpenAPI** generada desde los request specs (por ejemplo, con rswag).
+- **Más volumen en el dashboard:** medir con `EXPLAIN ANALYZE` y datos representativos si conviene un índice compuesto para el filtro por estado ordenado por fecha, y paginar por cursor en vez de offset.
 - **Observabilidad:** métricas de despacho (latencia, tasa de error por tienda) y alertas sobre órdenes `failed`.
 - **Recuperación dentro de Sidekiq** con `sidekiq-cron`, como alternativa al proceso `bin/dispatch_recovery`.

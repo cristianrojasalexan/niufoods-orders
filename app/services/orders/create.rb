@@ -104,8 +104,9 @@ module Orders
       end
     end
 
+    # Loads what the serializer needs, as a replay returns the stored order.
     def previous_order
-      Order.find_by(idempotency_key: idempotency_key) if idempotency_key
+      Order.includes(:restaurant, order_items: :product).find_by(idempotency_key: idempotency_key) if idempotency_key
     end
 
     def replay_or_conflict(order, fingerprint)

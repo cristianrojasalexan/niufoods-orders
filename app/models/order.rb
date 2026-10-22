@@ -29,11 +29,19 @@ class Order < ApplicationRecord
   # Prepended so it runs before the dependent: :destroy cascade: the order is
   # locked before its items, the same order item changes follow.
   before_destroy :lock_row, prepend: true
+  # The total calculated before validation comes from the items in memory,
+  # which may be stale if another process changed an item since they were
+  # loaded. Once the order and its items are written, the stored total is
+  # recalculated from the database. Declared after has_many, so it runs
+  # after the items are saved.
+  after_save :refresh_total_amount!
 
-  # Recalculates the total from the subtotals stored in the database. Items
-  # call it after locking the order row, within the same transaction.
+  # Recalculates the total from the subtotals stored in the database, with
+  # the order row locked so no item change can commit between the sum and
+  # the write. Runs within the transaction of the save that calls it.
   def refresh_total_amount!
-    update_column(:total_amount, order_items.sum(:subtotal))
+    lock_row
+    update_column(:total_amount, OrderItem.where(order_id: id).sum(:subtotal))
   end
 
   private

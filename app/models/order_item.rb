@@ -4,6 +4,12 @@ class OrderItem < ApplicationRecord
   belongs_to :order, inverse_of: :order_items
   belongs_to :product
 
+  # An item belongs to one order and one product for its whole life: moving
+  # it would leave the total of the original order stale, and changing its
+  # product would keep the price of the previous one. Rails raises if either
+  # is assigned on a saved item; remove the item and add a new one instead.
+  attr_readonly :order_id, :product_id
+
   validates :quantity, numericality: { only_integer: true, greater_than: 0, less_than_or_equal_to: MAX_QUANTITY }
   validates :unit_price, numericality: { only_integer: true, greater_than: 0 }
 

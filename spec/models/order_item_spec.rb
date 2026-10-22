@@ -83,6 +83,34 @@ RSpec.describe OrderItem, type: :model do
 
       expect(order.reload.total_amount).to eq(item.subtotal)
     end
+
+    # Another process changes an item between loading the order and loading
+    # its items, and again before the order is saved: the total the order
+    # calculates in memory is stale and differs from the one it loaded.
+    it "stays consistent when an order with stale items is saved" do
+      stale_order = Order.find(order.id)
+      OrderItem.find(item.id).update!(quantity: 3)
+      stale_order.order_items.load
+      OrderItem.find(item.id).update!(quantity: 1)
+
+      stale_order.update!(customer_name: "Camila Rojas")
+
+      expect(order.reload.total_amount).to eq(item.unit_price)
+      expect(order.total_amount).to eq(subtotals_sum)
+    end
+  end
+
+  describe "order and product" do
+    let(:item) { create(:order_item) }
+
+    it "cannot be moved to another order" do
+      expect { item.order = create(:order) }.to raise_error(ActiveRecord::ReadonlyAttributeError)
+      expect { item.update!(order_id: create(:order).id) }.to raise_error(ActiveRecord::ReadonlyAttributeError)
+    end
+
+    it "cannot change its product" do
+      expect { item.update!(product: create(:product)) }.to raise_error(ActiveRecord::ReadonlyAttributeError)
+    end
   end
 
   describe "database constraints" do
