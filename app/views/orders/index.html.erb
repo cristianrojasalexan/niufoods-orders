@@ -8,66 +8,122 @@
   <%= link_to "Actualizar", request.fullpath, class: "rounded-md bg-white px-3 py-2 text-sm font-medium shadow-sm ring-1 ring-inset ring-slate-300 hover:bg-slate-50" %>
 </div>
 
-<%# Summary by dispatch status, also used as filters %>
-<nav class="mt-6 grid grid-cols-2 gap-3 sm:grid-cols-5" aria-label="Filtrar por estado de despacho">
-  <% filters = [ [ nil, "Todas", @status_counts.values.sum ] ] +
+<%# Outside the frame, so typing in the search keeps the focus while the results update %>
+<%= form_with url: orders_path, method: :get, html: { role: "search" },
+              data: { controller: "filters", turbo_frame: "orders", turbo_action: "advance" },
+              class: "mt-6 flex flex-wrap items-end gap-3" do |form| %>
+  <%= form.hidden_field :status, value: @filters[:status], id: nil %>
+  <div class="min-w-48 flex-1">
+    <%= form.label :q, "Buscar N° de orden", class: "block text-xs font-medium text-slate-500" %>
+    <%= form.search_field :q, value: @filters[:q], placeholder: "LCON-000042", autocomplete: "off",
+                          data: { action: "input->filters#search" },
+                          class: "mt-1 h-9 w-full rounded-md bg-white px-3 text-sm shadow-sm ring-1 ring-inset ring-slate-300 focus:ring-2 focus:ring-rose-400 focus:outline-none" %>
+  </div>
+  <div>
+    <%= form.label :restaurant, "Tienda", class: "block text-xs font-medium text-slate-500" %>
+    <%= form.select :restaurant, @restaurants.map { |restaurant| [ restaurant.name, restaurant.code ] },
+                    { include_blank: "Todas", selected: @filters[:restaurant] },
+                    data: { action: "change->filters#submit" },
+                    class: "mt-1 h-9 rounded-md bg-white px-3 text-sm shadow-sm ring-1 ring-inset ring-slate-300 focus:ring-2 focus:ring-rose-400 focus:outline-none" %>
+  </div>
+  <div>
+    <%= form.label :order_type, "Tipo", class: "block text-xs font-medium text-slate-500" %>
+    <%= form.select :order_type, Order.order_types.keys.map { |type| [ OrdersHelper::ORDER_TYPE_LABELS.fetch(type), type ] },
+                    { include_blank: "Todos", selected: @filters[:order_type] },
+                    data: { action: "change->filters#submit" },
+                    class: "mt-1 h-9 rounded-md bg-white px-3 text-sm shadow-sm ring-1 ring-inset ring-slate-300 focus:ring-2 focus:ring-rose-400 focus:outline-none" %>
+  </div>
+  <%# Works without JavaScript too %>
+  <noscript><%= form.submit "Filtrar", name: nil, class: "rounded-md bg-rose-500 px-3 py-2 text-sm font-medium text-white" %></noscript>
+  <% if @filters.values.any? %>
+    <%= link_to "Limpiar filtros", orders_path, class: "py-2 text-sm text-slate-500 underline hover:text-slate-900" %>
+  <% end %>
+<% end %>
+
+<%= turbo_frame_tag "orders", data: { turbo_action: "advance" } do %>
+  <% if @live %>
+    <p data-controller="auto-refresh" class="mt-4 flex items-center gap-2 text-xs text-slate-500">
+      <span class="relative flex h-2 w-2">
+        <span class="absolute inline-flex h-full w-full animate-ping rounded-full bg-sky-400 opacity-75"></span>
+        <span class="relative inline-flex h-2 w-2 rounded-full bg-sky-500"></span>
+      </span>
+      Hay despachos en curso: la lista se actualiza sola.
+    </p>
+  <% end %>
+
+  <%# Summary by dispatch status, also used as filters. The cards load the whole page, so the
+      status kept by the filter form changes too. %>
+  <nav class="mt-4 grid grid-cols-2 gap-3 sm:grid-cols-5" aria-label="Filtrar por estado de despacho">
+    <% cards = [ [ nil, "Todas", @status_counts.values.sum ] ] +
                Order.dispatch_statuses.keys.map { |status| [ status, dispatch_status_label(status), @status_counts.fetch(status, 0) ] } %>
-  <% filters.each do |status, label, count| %>
-    <% active = status == @status %>
-    <%= link_to orders_path(status: status), class: "rounded-lg border px-4 py-3 #{active ? 'border-rose-400 bg-rose-50 ring-1 ring-rose-400' : 'border-slate-200 bg-white hover:border-slate-300'}",
-                                             aria: { current: (active ? "page" : nil) } do %>
-      <span class="block text-xs font-medium uppercase tracking-wide text-slate-500"><%= label %></span>
-      <span class="mt-1 block text-2xl font-semibold tabular-nums"><%= count %></span>
+    <% cards.each do |status, label, count| %>
+      <% active = status == @filters[:status] %>
+      <%= link_to orders_path(@filters.merge(status: status).compact),
+                  class: "rounded-lg border px-4 py-3 #{active ? 'border-rose-400 bg-rose-50 ring-1 ring-rose-400' : 'border-slate-200 bg-white hover:border-slate-300'}",
+                  aria: { current: (active ? "page" : nil) }, data: { turbo_frame: "_top" } do %>
+        <span class="block text-xs font-medium uppercase tracking-wide text-slate-500"><%= label %></span>
+        <span class="mt-1 block text-2xl font-semibold tabular-nums"><%= count %></span>
+      <% end %>
     <% end %>
-  <% end %>
-</nav>
+  </nav>
 
-<div class="mt-6 overflow-hidden rounded-lg border border-slate-200 bg-white shadow-sm">
-  <% if @orders.any? %>
-    <div class="overflow-x-auto">
-      <table class="min-w-full divide-y divide-slate-200 text-sm">
-        <thead class="bg-slate-50 text-left text-xs font-medium uppercase tracking-wide text-slate-500">
-          <tr>
-            <th scope="col" class="whitespace-nowrap px-4 py-3">N° de orden</th>
-            <th scope="col" class="whitespace-nowrap px-4 py-3">Tienda</th>
-            <th scope="col" class="whitespace-nowrap px-4 py-3 text-right">Total</th>
-            <th scope="col" class="whitespace-nowrap px-4 py-3">Tipo</th>
-            <th scope="col" class="whitespace-nowrap px-4 py-3">Creada</th>
-            <th scope="col" class="whitespace-nowrap px-4 py-3">Despacho</th>
-          </tr>
-        </thead>
-        <tbody class="divide-y divide-slate-100">
-          <% @orders.each do |order| %>
-            <tr id="<%= dom_id(order) %>" class="hover:bg-slate-50">
-              <td class="whitespace-nowrap px-4 py-3 font-mono font-medium">
-                <%= link_to order.number, order_path(order), class: "text-rose-600 hover:text-rose-800 hover:underline" %>
-              </td>
-              <td class="whitespace-nowrap px-4 py-3"><%= order.restaurant.name %></td>
-              <td class="whitespace-nowrap px-4 py-3 text-right tabular-nums"><%= clp(order.total_amount) %></td>
-              <td class="whitespace-nowrap px-4 py-3"><%= order_type_label(order) %></td>
-              <td class="whitespace-nowrap px-4 py-3 tabular-nums text-slate-600"><%= order_time(order.created_at) %></td>
-              <td class="whitespace-nowrap px-4 py-3">
-                <%= dispatch_status_badge(order) %>
-                <% if order.dispatch_attempts_count > 1 %>
-                  <span class="ml-1 text-xs text-slate-500"><%= order.dispatch_attempts_count %> intentos</span>
-                <% end %>
-              </td>
+  <div class="mt-6 overflow-hidden rounded-lg border border-slate-200 bg-white shadow-sm">
+    <% if @orders.any? %>
+      <div class="overflow-x-auto">
+        <table class="min-w-full divide-y divide-slate-200 text-sm">
+          <thead class="bg-slate-50 text-left text-xs font-medium uppercase tracking-wide text-slate-500">
+            <tr>
+              <th scope="col" class="whitespace-nowrap px-4 py-3">N° de orden</th>
+              <th scope="col" class="whitespace-nowrap px-4 py-3">Tienda</th>
+              <th scope="col" class="whitespace-nowrap px-4 py-3 text-right">Total</th>
+              <th scope="col" class="whitespace-nowrap px-4 py-3">Tipo</th>
+              <th scope="col" class="whitespace-nowrap px-4 py-3">Creada</th>
+              <th scope="col" class="whitespace-nowrap px-4 py-3">Despacho</th>
             </tr>
-          <% end %>
-        </tbody>
-      </table>
-    </div>
+          </thead>
+          <tbody class="divide-y divide-slate-100">
+            <% @orders.each do |order| %>
+              <tr id="<%= dom_id(order) %>" class="cursor-pointer hover:bg-slate-50"
+                  data-controller="row-link" data-row-link-url-value="<%= order_path(order) %>" data-action="click->row-link#open">
+                <td class="whitespace-nowrap px-4 py-3 font-mono font-medium">
+                  <%= link_to order.number, order_path(order), data: { turbo_frame: "_top" },
+                                                               class: "text-rose-600 hover:text-rose-800 hover:underline" %>
+                </td>
+                <td class="whitespace-nowrap px-4 py-3"><%= order.restaurant.name %></td>
+                <td class="whitespace-nowrap px-4 py-3 text-right tabular-nums"><%= clp(order.total_amount) %></td>
+                <td class="whitespace-nowrap px-4 py-3"><%= order_type_label(order) %></td>
+                <td class="whitespace-nowrap px-4 py-3 tabular-nums text-slate-600">
+                  <%= order_time(order.created_at) %>
+                  <span class="block text-xs text-slate-400"><%= relative_time(order.created_at) %></span>
+                </td>
+                <td class="whitespace-nowrap px-4 py-3">
+                  <%= dispatch_status_badge(order) %>
+                  <% if order.dispatch_attempts_count > 1 %>
+                    <span class="ml-1 text-xs text-slate-500"><%= order.dispatch_attempts_count %> intentos</span>
+                  <% end %>
+                </td>
+              </tr>
+            <% end %>
+          </tbody>
+        </table>
+      </div>
 
-    <div class="flex flex-wrap items-center justify-between gap-3 border-t border-slate-200 px-4 py-3 text-sm text-slate-500">
-      <%== @pagy.info_tag(item_name: "órdenes") %>
-      <%== @pagy.series_nav if @pagy.last > 1 %>
-    </div>
-  <% else %>
-    <div class="px-6 py-16 text-center">
-      <p class="font-medium">No hay órdenes<%= " con estado #{dispatch_status_label(@status).downcase}" if @status %>.</p>
-      <p class="mt-1 text-sm text-slate-500">
-        Crea algunas con <code class="rounded bg-slate-100 px-1.5 py-0.5">ruby script/simulate_orders.rb</code>
-      </p>
-    </div>
-  <% end %>
-</div>
+      <div class="flex flex-wrap items-center justify-between gap-3 border-t border-slate-200 px-4 py-3 text-sm text-slate-500">
+        <%== @pagy.info_tag(item_name: "órdenes") %>
+        <%== @pagy.series_nav if @pagy.last > 1 %>
+      </div>
+    <% elsif @filters.values.any? %>
+      <div class="px-6 py-16 text-center">
+        <p class="font-medium">Ninguna orden coincide con los filtros.</p>
+        <p class="mt-1 text-sm text-slate-500"><%= link_to "Limpiar filtros", orders_path, data: { turbo_frame: "_top" }, class: "underline hover:text-slate-900" %></p>
+      </div>
+    <% else %>
+      <div class="px-6 py-16 text-center">
+        <p class="font-medium">No hay órdenes.</p>
+        <p class="mt-1 text-sm text-slate-500">
+          Crea algunas con <code class="rounded bg-slate-100 px-1.5 py-0.5">ruby script/simulate_orders.rb</code>
+        </p>
+      </div>
+    <% end %>
+  </div>
+<% end %>

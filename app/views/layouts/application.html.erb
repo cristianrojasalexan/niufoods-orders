@@ -8,6 +8,9 @@
     <meta name="mobile-web-app-capable" content="yes">
     <%= csrf_meta_tags %>
     <%= csp_meta_tag %>
+    <%# Refreshing the same page morphs it: only what changed is replaced and the scroll is kept %>
+    <%= turbo_refresh_method_tag :morph %>
+    <%= turbo_refresh_scroll_tag :preserve %>
 
     <%= yield :head %>
 
@@ -39,9 +42,10 @@
 
     <main class="mx-auto max-w-7xl px-4 py-8 sm:px-6">
       <% flash.each do |type, message| %>
-        <div role="<%= type == "alert" ? "alert" : "status" %>"
-             class="mb-6 rounded-lg border px-4 py-3 text-sm <%= type == "alert" ? "border-amber-300 bg-amber-50 text-amber-900" : "border-emerald-300 bg-emerald-50 text-emerald-900" %>">
-          <%= message %>
+        <div role="<%= type == "alert" ? "alert" : "status" %>" data-controller="dismiss"
+             class="mb-6 flex items-start justify-between gap-4 rounded-lg border px-4 py-3 text-sm transition-opacity duration-300 <%= type == "alert" ? "border-amber-300 bg-amber-50 text-amber-900" : "border-emerald-300 bg-emerald-50 text-emerald-900" %>">
+          <span><%= message %></span>
+          <button type="button" data-action="dismiss#close" aria-label="Cerrar aviso" class="-my-1 rounded px-1 text-lg leading-none opacity-60 hover:opacity-100">&times;</button>
         </div>
       <% end %>
       <%= yield %>

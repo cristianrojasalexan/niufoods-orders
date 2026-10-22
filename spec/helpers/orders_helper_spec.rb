@@ -19,6 +19,27 @@ RSpec.describe OrdersHelper do
       .to eq(%w[Pendiente Enviando Enviada Error])
   end
 
+  describe "#relative_time" do
+    let(:now) { Time.zone.local(2026, 10, 22, 12, 0, 0) }
+
+    it "says how long ago it was" do
+      expect(helper.relative_time(now - 12.seconds, now: now)).to eq("hace 12 s")
+      expect(helper.relative_time(now - 3.minutes, now: now)).to eq("hace 3 min")
+      expect(helper.relative_time(now - 172.seconds, now: now)).to eq("hace 2 min")
+      expect(helper.relative_time(now - 5.hours, now: now)).to eq("hace 5 h")
+      expect(helper.relative_time(now - 2.days, now: now)).to eq("hace 2 d")
+    end
+
+    it "never goes negative when clocks differ slightly" do
+      expect(helper.relative_time(now + 2.seconds, now: now)).to eq("hace 0 s")
+    end
+  end
+
+  it "labels durations shortly" do
+    expect([ 4, 59.6, 125, 180, 7200 ].map { |seconds| helper.duration_label(seconds) })
+      .to eq([ "4 s", "1 min", "2 min 5 s", "3 min", "2 h" ])
+  end
+
   it "labels every dispatch attempt outcome" do
     labels = DispatchAttempt.outcomes.keys.map { |outcome| helper.dispatch_outcome_badge(DispatchAttempt.new(outcome: outcome)) }
 

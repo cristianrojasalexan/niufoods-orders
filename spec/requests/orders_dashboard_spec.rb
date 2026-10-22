@@ -40,10 +40,10 @@ RSpec.describe "Orders dashboard", type: :request do
     order.update_columns(created_at: Time.utc(2026, 10, 21, 15, 30), dispatch_status: "dispatched",
                          dispatched_at: Time.utc(2026, 10, 21, 15, 30))
 
-    get orders_path
+    travel_to(Time.utc(2026, 10, 21, 15, 35)) { get orders_path }
 
     cells = rows.sole.css("td").map { |cell| cell.text.squish }
-    expect(cells).to eq([ order.number, "Niu Foods Las Condes", "$ 22.470", "Delivery", "21-10-2026 12:30", "Enviada" ])
+    expect(cells).to eq([ order.number, "Niu Foods Las Condes", "$ 22.470", "Delivery", "21-10-2026 12:30 hace 5 min", "Enviada" ])
   end
 
   it "shows times in the time zone of Santiago" do
@@ -106,6 +106,101 @@ RSpec.describe "Orders dashboard", type: :request do
 
       expect(rows.size).to eq(3)
     end
+  end
+
+  describe "filters and search" do
+    let(:providencia) { create(:restaurant, name: "Niu Foods Providencia", code: "PROV") }
+
+    def numbers
+      rows.map { |row| row.css("td").first.text.squish }
+    end
+
+    let!(:lcon_delivery) { order_with("dispatched", order_type: "delivery", delivery_address: "Av. Ossa 1950") }
+    let!(:lcon_pickup) { order_with("failed", order_type: "pickup") }
+    let!(:prov_pickup) do
+      create(:order, restaurant: providencia, order_type: "pickup").tap do |order|
+        order.update_columns(dispatch_status: "dispatched", dispatched_at: Time.current)
+      end
+    end
+
+    it "filters by store" do
+      get orders_path(restaurant: "PROV")
+
+      expect(numbers).to eq([ prov_pickup.number ])
+    end
+
+    it "filters by order type" do
+      get orders_path(order_type: "pickup")
+
+      expect(numbers).to contain_exactly(lcon_pickup.number, prov_pickup.number)
+    end
+
+    it "searches by part of the order number, ignoring case" do
+      get orders_path(q: prov_pickup.number.downcase.delete_prefix("prov"))
+
+      expect(numbers).to eq([ prov_pickup.number ])
+    end
+
+    it "combines the filters and counts each status within them" do
+      get orders_path(restaurant: "LCON", order_type: "pickup")
+
+      expect(numbers).to eq([ lcon_pickup.number ])
+      cards = Nokogiri::HTML(response.body).css("nav[aria-label='Filtrar por estado de despacho'] a")
+      expect(cards.to_h { |link| link.css("span").map(&:text).then { |label, count| [ label, count.to_i ] } })
+        .to include("Todas" => 1, "Error" => 1, "Enviada" => 0)
+      expect(cards.map { |link| link["href"] }).to all(include("restaurant=LCON", "order_type=pickup"))
+    end
+
+    it "keeps the dispatch status filter when other filters are applied" do
+      get orders_path(status: "dispatched", restaurant: "LCON")
+
+      expect(numbers).to eq([ lcon_delivery.number ])
+      expect(Nokogiri::HTML(response.body).css("form[role='search'] input[name='status']").sole["value"]).to eq("dispatched")
+    end
+
+    it "ignores unknown values" do
+      get orders_path(restaurant: "XXXX", order_type: "drone")
+
+      expect(rows.size).to eq(3)
+    end
+
+    it "says when no order matches" do
+      get orders_path(q: "NOPE")
+
+      expect(response.body).to include("Ninguna orden coincide con los filtros.")
+    end
+  end
+
+  describe "live refresh" do
+    def live_indicator
+      Nokogiri::HTML(response.body).css("[data-controller='auto-refresh']")
+    end
+
+    it "refreshes itself while some dispatch is pending or being sent" do
+      order_with("dispatched")
+      order_with("dispatching")
+
+      get orders_path
+
+      expect(live_indicator.text).to include("la lista se actualiza sola")
+    end
+
+    it "does not refresh itself once every dispatch ended" do
+      order_with("dispatched")
+      order_with("failed")
+
+      get orders_path
+
+      expect(live_indicator).to be_empty
+    end
+  end
+
+  it "makes each row open its order" do
+    order = order_with("pending")
+
+    get orders_path
+
+    expect(rows.sole["data-row-link-url-value"]).to eq(order_path(order))
   end
 
   describe "pagination" do

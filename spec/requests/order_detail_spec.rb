@@ -55,18 +55,39 @@ RSpec.describe "Order detail", type: :request do
       expect(response.body).to include("No aplica: retiro en tienda")
     end
 
-    it "groups the dispatch attempts by cycle, the latest first" do
+    it "shows the dispatch attempts as a timeline per cycle, the latest cycle first" do
       order = failed_order
-      attempt(order, cycle: 1, number: 1, outcome: "transient", http_status: 503, error_message: "store answered 503")
-      attempt(order, cycle: 1, number: 2, outcome: "permanent", http_status: 422, error_message: "store answered 422")
+      first = attempt(order, cycle: 1, number: 1, outcome: "transient", http_status: 503, error_message: "store answered 503")
+      second = attempt(order, cycle: 1, number: 2, outcome: "permanent", http_status: 422, error_message: "store answered 422")
+      second.update_columns(created_at: first.created_at + 4.seconds)
       attempt(order, cycle: 2, number: 1, outcome: "success", http_status: 201)
 
       get order_path(order)
 
-      cycles = page.css("tbody[id^='cycle_']")
-      expect(cycles.map { |cycle| cycle.css("th[scope='rowgroup']").text.squish }).to eq([ "Ciclo 2 · 1 intento", "Ciclo 1 · 2 intentos" ])
-      expect(cycles.last.css("tr:has(td)").map { |row| row.css("td").map { |cell| cell.text.squish }.values_at(0, 2, 3, 5) })
-        .to eq([ [ "1", "Falla transitoria", "503", "store answered 503" ], [ "2", "Rechazada", "422", "store answered 422" ] ])
+      cycles = page.css("[id^='cycle_']")
+      expect(cycles.map { |cycle| cycle.css("h3").text.squish }).to eq([ "Ciclo 2 · 1 intento", "Ciclo 1 · 2 intentos" ])
+      steps = cycles.last.css("li").map { |step| step.text.squish }
+      expect(steps.size).to eq(3)
+      expect(steps[0]).to include("Intento 1", "Falla transitoria", "HTTP 503", "15 ms", "store answered 503")
+      expect(steps[1]).to eq("4 s después")
+      expect(steps[2]).to include("Intento 2", "Rechazada", "HTTP 422", "store answered 422")
+    end
+
+    it "shows the next attempt of a pending order and refreshes itself while it is in progress" do
+      order = create(:order, restaurant: restaurant)
+      order.update_columns(dispatch_attempts_count: 1, next_dispatch_at: 8.seconds.from_now)
+      attempt(order, cycle: 1, number: 1, outcome: "transient", http_status: 503)
+
+      get order_path(order)
+
+      expect(page.css("#cycle_1 li").last.text.squish).to start_with("Próximo intento a las")
+      expect(page.css("[data-controller='auto-refresh']")).to be_present
+    end
+
+    it "stops refreshing itself once the dispatch ends" do
+      get order_path(failed_order)
+
+      expect(page.css("[data-controller='auto-refresh']")).to be_empty
     end
 
     it "says when there are no attempts yet" do
@@ -81,6 +102,8 @@ RSpec.describe "Order detail", type: :request do
       expect(response.body).to include("store answered 422")
       expect(page.css("form[action$='/redispatch'] button").text).to eq("Reintentar despacho")
       expect(page.css("form[action$='/redispatch'] input[name='cycle']").sole["value"]).to eq("1")
+      expect(page.css("form[action$='/redispatch']").sole["data-turbo-confirm"]).to include("Se abrirá un ciclo nuevo")
+      expect(page.css("form[action$='/redispatch'] button").sole["data-turbo-submits-with"]).to eq("Reintentando…")
     end
 
     it "does not offer to retry an order that is not failed" do

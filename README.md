@@ -238,9 +238,11 @@ Más detalle en [docs/simulation.md](docs/simulation.md) y [docs/simulated_store
 
 ## Dashboard
 
-- **`/`**: tabla con N° de orden, tienda, total en CLP, tipo (Retiro / Delivery), fecha y hora de creación en hora de Santiago y estado de despacho (Pendiente / Enviando / Enviada / Error), con la cantidad de intentos cuando hubo reintentos. Las tarjetas superiores muestran el conteo por estado y sirven de filtro. Pagina de a 25 órdenes con Pagy.
-- **`/orders/:id`**: productos con cantidad, precio unitario y subtotal; datos del cliente y dirección; y cada intento de despacho agrupado por ciclo, con resultado, código HTTP, duración y error.
-- **Reintentar despacho**: el botón aparece solo en órdenes `failed` y abre un ciclo nuevo de intentos. El reintento solo se aplica si la orden sigue `failed` en el mismo ciclo que mostraba la página, así que varios clics, o un clic desde una página desactualizada, abren a lo sumo un ciclo nuevo.
+- **`/`**: tabla con N° de orden, tienda, total en CLP, tipo (Retiro / Delivery), fecha y hora de creación en hora de Santiago (con "hace 3 min" debajo) y estado de despacho (Pendiente / Enviando / Enviada / Error), con la cantidad de intentos cuando hubo reintentos. Pagina de a 25 órdenes con Pagy, y toda la fila abre el detalle de la orden.
+- **Filtros combinables:** búsqueda por número de orden, tienda y tipo de pedido. Las tarjetas superiores muestran el conteo por estado dentro de esos filtros y filtran por estado. Los filtros se aplican mientras se escribe o se elige, sin perder el foco, y quedan en la URL, así que una vista filtrada se puede compartir o recargar.
+- **Actualización en vivo:** mientras haya despachos pendientes o en curso, la página se refresca sola cada 3 s y muestra un indicador. Usa el *morphing* de Turbo 8: solo cambia lo que cambió y se mantiene el scroll. Cuando todos los despachos terminan, deja de consultar al servidor; en una pestaña oculta espera a que vuelva a estar visible.
+- **`/orders/:id`**: productos con cantidad, precio unitario y subtotal; datos del cliente y dirección; y los intentos de despacho como una **línea de tiempo por ciclo**, con resultado, código HTTP, duración, error y el tiempo entre intentos, donde se ve crecer la espera del *backoff*. Mientras el despacho sigue en curso, muestra el próximo intento y se actualiza sola.
+- **Reintentar despacho**: el botón aparece solo en órdenes `failed`, pide confirmación y muestra "Reintentando…" mientras se envía. Abre un ciclo nuevo de intentos, y solo se aplica si la orden sigue `failed` en el mismo ciclo que mostraba la página, así que varios clics, o un clic desde una página desactualizada, abren a lo sumo un ciclo nuevo.
 
 ![Detalle de una orden con sus intentos de despacho](docs/images/order-detail.png)
 
@@ -311,7 +313,7 @@ Todas tienen un valor por defecto que funciona. Para cambiarlas, copia `.env.exa
 - **Integridad en la base, no solo en Rails.** Claves foráneas, `NOT NULL`, `CHECK` (cantidad positiva, subtotal coherente, estados válidos y sus columnas requeridas) e índices únicos protegen los datos aunque alguien escriba sin pasar por los modelos.
 - **Idempotencia con huella de la solicitud.** La misma clave con la misma solicitud canónica devuelve la orden original (`200`); con otra solicitud, `409`. Las solicitudes simultáneas las resuelve un índice único.
 - **Tienda simulada dentro de la app, pero aislada.** Un servicio aparte, por ejemplo en Sinatra, sumaría otro proceso e imagen sin aportar a la evaluación. El endpoint vive en su propio namespace, no usa los modelos de órdenes y tiene sus propias tablas. En producción bastaría con apuntar `dispatch_url` a la tienda real.
-- **Rails con Hotwire y Tailwind para el dashboard.** Cumple lo pedido sin sumar un frontend SPA aparte, y queda en el mismo deploy.
+- **Rails con Hotwire y Tailwind para el dashboard.** Cumple lo pedido sin sumar un frontend SPA aparte, y queda en el mismo deploy. La actualización en vivo usa *morphing* de Turbo con un refresco periódico solo mientras hay despachos en curso, en vez de Turbo Streams con WebSockets: para un panel interno da el mismo resultado sin sumar Action Cable.
 - **Fechas:** el dashboard muestra la hora de Santiago (`config.time_zone`), y la API responde en UTC ISO 8601, como se espera de un contrato entre sistemas.
 
 ## Tests, lint y CI
@@ -382,7 +384,6 @@ git log --reverse --oneline
 
 - **Autenticación de la API y de las tiendas.** Hoy la API no autentica a los canales. Lo siguiente sería API keys por canal, `Idempotency-Key` con alcance por cliente, y firma HMAC del payload que se envía a cada tienda.
 - **Transactional outbox.** Entre el commit de una orden y el encolado de su job hay una ventana en la que una falla de Redis deja la orden sin job hasta la siguiente ronda de recuperación. Una tabla de eventos escrita en la misma transacción cerraría esa ventana.
-- **Actualización en vivo del dashboard** con Turbo Streams, en vez del botón "Actualizar".
 - **Especificación OpenAPI** generada desde los request specs (por ejemplo, con rswag).
 - **Más volumen en el dashboard:** medir con `EXPLAIN ANALYZE` y datos representativos si conviene un índice compuesto para el filtro por estado ordenado por fecha, y paginar por cursor en vez de offset.
 - **Observabilidad:** métricas de despacho (latencia, tasa de error por tienda) y alertas sobre órdenes `failed`.
