@@ -60,3 +60,5 @@ bin/bundler-audit      # vulnerabilidades conocidas en las gemas
 ```
 
 Los tests bloquean cualquier llamada HTTP real con WebMock: toda comunicación con las tiendas se stubbea.
+
+En GitHub Actions (`.github/workflows/ci.yml`) cada push a `main` y cada pull request corre los mismos chequeos en jobs paralelos: Brakeman y bundler-audit, la auditoría de importmap, RuboCop y la suite de RSpec con PostgreSQL 16 y Redis 7 como servicios.
