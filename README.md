@@ -27,7 +27,7 @@ API central en Ruby on Rails que recibe las órdenes de los canales digitales de
 | [Arquitectura](docs/architecture.md) | Diagrama de componentes, modelo de datos (ERD) y flujo completo de una orden. |
 | [API de órdenes](docs/api.md) | Contrato, validaciones, idempotencia, códigos de respuesta y de error. |
 | [Despacho a tienda](docs/dispatch.md) | Estados, claim atómico con reserva temporal (*lease*), reintentos, recuperación, reintento manual y configuración. |
-| [Tiendas simuladas](docs/simulated_stores.md) | Recepción, deduplicación atómica y modos de falla. |
+| [Tiendas simuladas](docs/simulated_stores.md) | Recepción, deduplicación atómica, modos de falla y el panel Tiendas. |
 | [Simulación](docs/simulation.md) | Script de simulación de órdenes y escenarios de demo del despacho. |
 
 ## Probar la solución en 5 minutos
@@ -225,6 +225,8 @@ curl -X PUT http://localhost:3000/simulated_stores/LCON/mode -H 'Content-Type: a
 | `reject` | `422` (error permanente: la orden queda `failed`). |
 | `down` | `503` siempre (se agotan los intentos y la orden queda `failed`). |
 
+![Panel de tiendas simuladas, con Las Condes en modo Caída](docs/images/stores.png)
+
 **`script/demo_scenarios.rb`** corre un escenario por modo y compara lo esperado con lo obtenido: el estado, los intentos y lo que registró la tienda. Restaura el modo original de la tienda al terminar, aunque algo falle o se interrumpa con Ctrl-C.
 
 ```
@@ -242,9 +244,9 @@ Más detalle en [docs/simulation.md](docs/simulation.md) y [docs/simulated_store
 
 - **`/`**: tabla con N° de orden, tienda, total en CLP, tipo (Retiro / Delivery), fecha y hora de creación en hora de Santiago (con "hace 3 min" debajo) y estado de despacho (Pendiente / Enviando / Enviada / Error), con la cantidad de intentos cuando hubo reintentos. Pagina de a 25 órdenes con Pagy, y toda la fila abre el detalle de la orden.
 - **Filtros combinables:** búsqueda por número de orden, tienda y tipo de pedido. Las tarjetas superiores muestran el conteo por estado dentro de esos filtros y filtran por estado. Los filtros se aplican mientras se escribe o se elige, sin perder el foco, y quedan en la URL, así que una vista filtrada se puede compartir o recargar.
-- **Actualización en vivo:** la página se refresca sola, cada 3 s mientras haya despachos pendientes o en curso y cada 15 s si no, para que aparezcan las órdenes nuevas. Una etiqueta junto al título lo indica ("En vivo · 3 s"). Usa el *morphing* de Turbo 8: solo cambia lo que cambió y se mantiene el scroll. Las filas que aparecen o cambian de estado se iluminan un momento. En una pestaña oculta espera a que vuelva a estar visible.
+- **Actualización en vivo:** la página se refresca sola, cada 3 s mientras haya despachos pendientes o en curso y cada 15 s si no, para que aparezcan las órdenes nuevas. Una etiqueta junto al título lo indica ("En vivo · 3 s"). El refresco nunca pisa una búsqueda que se está escribiendo: espera a que se envíe y, si ya estaba en curso, actualiza todo menos el formulario. Usa el *morphing* de Turbo 8: solo cambia lo que cambió y se mantiene el scroll. Las filas que aparecen o cambian de estado se iluminan un momento. En una pestaña oculta espera a que vuelva a estar visible.
 - **Lo que requiere atención:** justo bajo el título, un aviso con las órdenes con error y un enlace a ellas. Si alguna tienda simulada no está aceptando órdenes, una franja bajo el header lo indica en todas las páginas, para que una orden con error tenga su explicación a la vista. Además, los indicadores del día: órdenes, monto, porcentaje entregado a tienda y tiempo medio de entrega.
-- **`/stores`**: panel de las tiendas simuladas, con su modo actual, botones para cambiarlo (Acepta / Inestable / Rechaza / Caída) y las últimas órdenes que recibió cada una.
+- **`/stores`**: panel de las tiendas simuladas, con su modo actual, botones para cambiarlo (Acepta / Inestable / Rechaza / Caída), cuántas órdenes recibió y cuántas solicitudes le llegaron, y sus últimas órdenes recibidas. Detalle en [Panel Tiendas](docs/simulated_stores.md#panel-tiendas).
 - **Accesibilidad:** los conteos se anuncian a lectores de pantalla cuando cambian, el foco del teclado es visible y las animaciones se desactivan si el sistema pide reducir el movimiento.
 - **`/orders/:id`**: productos con cantidad, precio unitario y subtotal; datos del cliente y dirección; y los intentos de despacho como una **línea de tiempo por ciclo**, con resultado, código HTTP, duración, error y el tiempo entre intentos, donde se ve crecer la espera del *backoff*. Mientras el despacho sigue en curso, muestra el próximo intento y se actualiza sola.
 - **Reintentar despacho**: el botón aparece solo en órdenes `failed`, pide confirmación y muestra "Reintentando…" mientras se envía. Abre un ciclo nuevo de intentos, y solo se aplica si la orden sigue `failed` en el mismo ciclo que mostraba la página, así que varios clics, o un clic desde una página desactualizada, abren a lo sumo un ciclo nuevo.
@@ -351,10 +353,14 @@ En **GitHub Actions** (`.github/workflows/ci.yml`), cada push a `main` y cada pu
 ```
 app/
   controllers/api/v1/          API JSON (crear y consultar órdenes, errores uniformes)
-  controllers/orders_controller.rb       dashboard, detalle y reintento manual
-  controllers/store_simulator/ tiendas simuladas (recepción y modos)
+  controllers/orders_controller.rb       dashboard, filtros, detalle y reintento manual
+  controllers/stores_controller.rb       panel de las tiendas simuladas (/stores)
+  controllers/store_simulator/ tiendas simuladas (recepción y modos), como API JSON
+  javascript/controllers/      Stimulus: refresco en vivo, filtros, filas clickeables,
+                               resaltado de cambios y avisos que se cierran
+  views/                       dashboard, detalle, panel de tiendas y la etiqueta "en vivo" (shared/)
   services/orders/             Create, RequestFingerprint, Dispatcher, DispatchRetryPolicy,
-                               DispatchRecovery, Redispatch
+                               DispatchRecovery, Redispatch, DailySummary
   jobs/dispatch_order_job.rb   ejecuta un intento de despacho
   models/                      Restaurant, Product, Order, OrderItem, DispatchAttempt, StoreSimulator::*
   serializers/                 representación JSON de la orden
@@ -377,7 +383,8 @@ El historial muestra cómo se construyó la solución, con commits pequeños en 
 7. despacho con reintentos y recuperación;
 8. scripts;
 9. dashboard;
-10. CI y documentación.
+10. CI y documentación;
+11. mejoras de la interfaz: actualización en vivo, filtros y búsqueda, línea de tiempo del despacho, panel de tiendas y avisos.
 
 Cada `fix:` que sigue a un `feat:` corrige un hallazgo de revisión de código sobre ese commit. Su mensaje explica el problema y la corrección.
 
@@ -393,3 +400,4 @@ git log --reverse --oneline
 - **Más volumen en el dashboard:** medir con `EXPLAIN ANALYZE` y datos representativos si conviene un índice compuesto para el filtro por estado ordenado por fecha, y paginar por cursor en vez de offset.
 - **Observabilidad:** métricas de despacho (latencia, tasa de error por tienda) y alertas sobre órdenes `failed`.
 - **Recuperación dentro de Sidekiq** con `sidekiq-cron`, como alternativa al proceso `bin/dispatch_recovery`.
+- **Tests automatizados de la interfaz en el navegador.** Los request specs cubren lo que renderiza el servidor, pero no el JavaScript: el refresco en vivo, la protección de la búsqueda durante un refresco y el resaltado de filas se verificaron con un navegador real (Puppeteer). El siguiente paso serían system tests con Capybara y un navegador headless en el CI.

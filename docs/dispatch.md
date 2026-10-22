@@ -138,7 +138,7 @@ bin/rails orders:recover_dispatch   # una sola ronda, por ejemplo desde un cron
 
 ## Reintento manual
 
-Una orden `failed` se puede reintentar con el botón **"Reintentar despacho"** de su detalle en el dashboard (`POST /orders/:id/redispatch`). Por ejemplo, después de que la tienda vuelva a estar disponible o se corrija lo que la hizo rechazar la orden.
+Una orden `failed` se puede reintentar con el botón **"Reintentar despacho"** de su detalle en el dashboard (`POST /orders/:id/redispatch`), que pide confirmación y muestra "Reintentando…" mientras se envía. Por ejemplo, después de que la tienda vuelva a estar disponible o se corrija lo que la hizo rechazar la orden.
 
 `Orders::Redispatch` abre un **ciclo nuevo** con un solo `UPDATE` condicionado:
 

@@ -74,7 +74,7 @@ Created by order type:   delivery=12, pickup=12
 Total amount created:    $1146940
 ```
 
-Las órdenes creadas se despachan a sus tiendas en segundo plano. Se puede revisar su estado en `GET /api/v1/orders/:id` o en lo que recibió cada tienda con `GET /simulated_stores/:code/orders`.
+Las órdenes creadas se despachan a sus tiendas en segundo plano. Se puede seguir su despacho en vivo en el dashboard (`/`), ver lo que recibió cada tienda en la página **Tiendas** (`/stores`), o consultarlo por HTTP con `GET /api/v1/orders/:id` y `GET /simulated_stores/:code/orders`.
 
 ## Escenarios de demo del despacho
 

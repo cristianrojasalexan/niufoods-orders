@@ -82,8 +82,8 @@ flowchart TB
 | **PostgreSQL** | Fuente de verdad de las órdenes **y del estado de despacho**: intentos, próximo intento y lease del worker activo. |
 | **Redis + Sidekiq** | Ejecutan el despacho en segundo plano. Sidekiq no decide cuántas veces reintentar; eso lo controla PostgreSQL. |
 | **`bin/dispatch_recovery`** | Proceso periódico que retoma las órdenes que quedaron sin job, por ejemplo si Redis falló justo después de guardar la orden o si un worker murió a mitad de un despacho. |
-| **Tiendas** | Reciben la orden por HTTP. En esta solución se simulan con un endpoint aislado dentro de la app (`/simulated_stores/:code/orders`). En producción serían sistemas externos y bastaría con cambiar `dispatch_url`. |
-| **Dashboard** | Muestra las órdenes, su estado de despacho y su detalle, y permite reintentar manualmente un despacho fallido. |
+| **Tiendas** | Reciben la orden por HTTP. En esta solución se simulan con un endpoint aislado dentro de la app (`/simulated_stores/:code/orders`). En producción serían sistemas externos y bastaría con cambiar `dispatch_url`. La página **Tiendas** (`/stores`) muestra cómo responde cada una y lo que recibió, y cambia su modo; solo usa las tablas del simulador. |
+| **Dashboard** | Muestra las órdenes con filtros y búsqueda, el resumen del día, las órdenes con error y el detalle de cada una con sus intentos de despacho como línea de tiempo, y permite reintentar manualmente un despacho fallido. Se actualiza solo con el *morphing* de Turbo: cada 3 s mientras hay despachos en curso y cada 15 s si no. |
 
 Las flechas punteadas son comunicación asíncrona a través de la cola. La flecha gruesa es la entrega HTTP a la tienda de destino de cada orden; en el diagrama se dibuja hacia Las Condes, pero cada orden va a la tienda indicada en su `restaurant_id`.
 

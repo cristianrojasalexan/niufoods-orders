@@ -70,9 +70,7 @@ El modo se resuelve en este orden:
 
 ### Consultar y cambiar el modo
 
-Desde el navegador, en la página **Tiendas** (`/stores`): muestra el modo de cada tienda, lo que recibió y botones para cambiarlo a `ok`, `flaky:2`, `reject` o `down`. Otros valores, como `flaky:3`, se pueden poner por HTTP o con `STORE_MODES`.
-
-Por HTTP:
+Desde el navegador, en la página **Tiendas** (ver [Panel Tiendas](#panel-tiendas)), o por HTTP:
 
 ```bash
 curl http://localhost:3000/simulated_stores/LCON/mode
@@ -119,6 +117,32 @@ curl http://localhost:3000/simulated_stores/LCON/orders
 
 La lista incluye las órdenes que la tienda todavía no aceptó, con `received_at: null`, y muestra las 100 más recientes.
 
+## Panel Tiendas
+
+La página **Tiendas** (`/stores`, en el menú de la app) permite hacer toda la demostración de fallas desde el navegador, sin `curl`. Muestra una tarjeta por restaurante:
+
+![Panel de tiendas simuladas, con Las Condes en modo Caída](images/stores.png)
+
+- **Modo actual** con una etiqueta y una descripción de lo que hace, y **un botón por modo** (el actual queda marcado y deshabilitado):
+
+  | Botón | Modo | Efecto en el despacho |
+  |---|---|---|
+  | Acepta | `ok` | Cada orden se entrega en el primer intento. |
+  | Inestable | `flaky:2` | Cada orden falla dos veces con `503` y se entrega en el tercer intento. |
+  | Rechaza | `reject` | Cada orden queda `failed` en el primer intento (`422`, error permanente). |
+  | Caída | `down` | Cada orden agota sus intentos con `503` y queda `failed`. |
+
+  El panel solo ofrece estos cuatro. Otros valores válidos, como `flaky:3`, se configuran por HTTP o con `STORE_MODES`, y el panel los muestra tal cual.
+- **Órdenes recibidas:** cuántas órdenes distintas aceptó la tienda. Una orden cuenta una sola vez, aunque haya llegado varias veces, porque la tienda deduplica por número de orden.
+- **Solicitudes:** todas las solicitudes HTTP que le llegaron, incluidas las que respondió con error y los reenvíos de órdenes que ya tenía. La diferencia con las órdenes recibidas son los reintentos: por ejemplo, 20 órdenes recibidas con 47 solicitudes.
+- **Últimas recibidas:** las 5 órdenes aceptadas más recientes, con cuántas solicitudes necesitó cada una y hace cuánto llegaron.
+
+**El cambio de modo es inmediato** y vale para la próxima solicitud que reciba la tienda, también para los reintentos de órdenes que ya estaban en curso. Por ejemplo, si una tienda está "Caída" y una orden va por su segundo intento, volverla a "Acepta" hace que el tercer intento se entregue.
+
+**Aviso en toda la app:** mientras alguna tienda esté en un modo que no acepta todas las órdenes, una franja "Modo simulación" bajo el header lo indica en todas las páginas, con un enlace al panel. Así, el detalle de una orden fallida tiene su explicación a la vista. `flaky:0` no dispara el aviso, porque no falla ningún intento.
+
+El panel se actualiza solo (cada 3 s mientras hay despachos en curso y cada 15 s si no) y lee los modos y las recepciones en un número fijo de consultas, sin importar cuántas tiendas haya. Como el resto del simulador, solo usa sus propias tablas.
+
 ## Alcance
 
-Las tiendas simuladas no tienen autenticación: cualquiera que llegue a la app puede cambiar sus modos. Es aceptable para una herramienta de demostración, pero no deberían exponerse en un entorno real.
+Las tiendas simuladas no tienen autenticación: cualquiera que llegue a la app puede cambiar sus modos, por HTTP o desde el panel Tiendas. Es aceptable para una herramienta de demostración, pero no deberían exponerse en un entorno real.
