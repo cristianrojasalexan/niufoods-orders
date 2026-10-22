@@ -46,6 +46,24 @@ RSpec.describe DemoScenarios do
     expect(out.string).to include("down        failed, 5 attempts      failed, 5 attempts      no (5 requests)   PASS")
   end
 
+  context "when the API allows fewer attempts than the flaky store needs" do
+    around do |example|
+      max_attempts = settings.max_attempts_per_cycle
+      settings.max_attempts_per_cycle = 2
+      example.run
+    ensure
+      settings.max_attempts_per_cycle = max_attempts
+    end
+
+    it "expects the flaky order to fail when the cycle runs out of attempts" do
+      results = run(scenarios: described_class.scenarios(max_attempts: 2))
+
+      expect(results).to all(be_passed)
+      flaky = results.find { |result| result.scenario.mode == "flaky:2" }
+      expect([ flaky.status, flaky.attempts, flaky.received?, flaky.store_requests ]).to eq([ "failed", 2, false, 2 ])
+    end
+  end
+
   it "reports a scenario that ends differently from what was expected" do
     wrong = DemoScenarios::Scenario.new(mode: "reject", description: "expects a delivery", status: "dispatched",
                                         attempts: 1, received: true)
@@ -81,6 +99,19 @@ RSpec.describe DemoScenarios do
       expect(store_mode).to eq("flaky:1")
     end
 
+    it "reports when it could not be restored" do
+      allow(client).to receive(:change_store_mode).and_call_original
+      allow(client).to receive(:change_store_mode).with("PROV", "flaky:1")
+                                                  .and_raise(DemoScenarios::Error, "connection refused")
+      demo = DemoScenarios::Run.new(client: client, store: "PROV", restaurant_id: 1, product_id: 1,
+                                    scenarios: [ described_class.scenarios(max_attempts: 5).first ], timeout: 30,
+                                    poll_interval: 0, out: out, wait: ->(_) { DispatchOrderJob.drain })
+
+      expect(demo.call).to all(be_passed)
+      expect(demo).not_to be_restored
+      expect(out.string).to include("Could not restore store PROV to mode flaky:1")
+    end
+
     it "is restored when the API stops answering" do
       allow(client).to receive(:order).and_raise(DemoScenarios::Error, "connection refused")
 
@@ -97,6 +128,20 @@ RSpec.describe DemoScenarios do
       expect(out.string).to include("Demo stopped:", "Connection refused")
     end
 
+    {
+      "every scenario passed and the store was restored" => [ true, true, 0 ],
+      "a scenario failed" => [ false, true, 1 ],
+      "every scenario passed but the store was not restored" => [ true, false, 1 ]
+    }.each do |description, (passed, restored, exit_code)|
+      it "exits with #{exit_code} when #{description}" do
+        demo = instance_double(DemoScenarios::Run, call: [ instance_double(DemoScenarios::Result, passed?: passed) ],
+                                                   restored?: restored)
+        allow(DemoScenarios::Run).to receive(:new).and_return(demo)
+
+        expect(described_class.main([], out: out)).to eq(exit_code)
+      end
+    end
+
     it "only accepts the stores of the dataset" do
       expect { described_class.main(%w[--store XXXX], out: out) }.to raise_error(OptionParser::InvalidArgument)
     end
@@ -106,5 +151,6 @@ RSpec.describe DemoScenarios do
     expect(described_class.scenarios(max_attempts: 3).last).to have_attributes(mode: "down", attempts: 3)
     expect(described_class.parse_options(%w[--store LCON --timeout 200 --max-attempts 3]))
       .to include(store: "LCON", timeout: 200, max_attempts: 3)
+    expect { described_class.parse_options(%w[--max-attempts 0]) }.to raise_error(OptionParser::InvalidArgument)
   end
 end

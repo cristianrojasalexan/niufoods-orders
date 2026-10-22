@@ -33,12 +33,19 @@ module DemoScenarios
   # tells whether the store must end up with the order.
   Scenario = Struct.new(:mode, :description, :status, :attempts, :received, keyword_init: true)
 
+  FLAKY_FAILURES = 2
+
+  # max_attempts is the MAX_ATTEMPTS_PER_CYCLE of the API. The flaky store
+  # needs FLAKY_FAILURES + 1 attempts; with a lower limit the order is
+  # expected to fail once the cycle runs out of attempts.
   def self.scenarios(max_attempts:)
+    flaky_delivered = max_attempts > FLAKY_FAILURES
     [
       Scenario.new(mode: "ok", description: "the store accepts the order",
                    status: "dispatched", attempts: 1, received: true),
-      Scenario.new(mode: "flaky:2", description: "503 twice, then the store accepts it",
-                   status: "dispatched", attempts: 3, received: true),
+      Scenario.new(mode: "flaky:#{FLAKY_FAILURES}", description: "503 twice, then the store accepts it",
+                   status: flaky_delivered ? "dispatched" : "failed",
+                   attempts: flaky_delivered ? FLAKY_FAILURES + 1 : max_attempts, received: flaky_delivered),
       Scenario.new(mode: "reject", description: "the store rejects the order with 422",
                    status: "failed", attempts: 1, received: false),
       Scenario.new(mode: "down", description: "the store always answers 503",
@@ -132,7 +139,8 @@ module DemoScenarios
     end
 
     # Runs every scenario in order and returns their results. The store goes
-    # back to the mode it had before, whatever happens.
+    # back to the mode it had before, whatever happens; restored? tells
+    # whether that worked.
     def call
       original_mode = client.store_mode(store)
       out.puts "Store #{store} is in mode #{original_mode}; it will be restored at the end."
@@ -142,8 +150,10 @@ module DemoScenarios
       out.puts table(results)
       results
     ensure
-      restore(original_mode) if original_mode
+      @restored = restore(original_mode) if original_mode
     end
+
+    def restored? = @restored == true
 
     private
 
@@ -219,9 +229,11 @@ module DemoScenarios
       out.puts if $! # interrupted in the middle of a line
       client.change_store_mode(store, mode)
       out.puts "Store #{store} restored to mode #{mode}."
+      true
     rescue Error => e
       out.puts "Could not restore store #{store} to mode #{mode} (#{e.message}). Restore it with: " \
                "curl -X PUT .../simulated_stores/#{store}/mode -H 'Content-Type: application/json' -d '{\"mode\":\"#{mode}\"}'"
+      false
     end
 
     def monotonic_now
@@ -242,6 +254,8 @@ module DemoScenarios
       parser.on("--store CODE", "Store used by the scenarios (default: PROV)") { |value| options[:store] = value }
       parser.on("--timeout SECONDS", Integer, "Wait per scenario (default: 120)") { |value| options[:timeout] = value }
       parser.on("--max-attempts N", Integer, "MAX_ATTEMPTS_PER_CYCLE of the API (default: 5)") do |value|
+        raise OptionParser::InvalidArgument, "--max-attempts must be at least 1" unless value.positive?
+
         options[:max_attempts] = value
       end
     end.parse!(argv)
@@ -255,11 +269,12 @@ module DemoScenarios
 
     out.puts "Running #{scenarios(max_attempts: options[:max_attempts]).size} dispatch scenarios against " \
              "#{options[:url]} (timeout #{options[:timeout]}s each)"
-    results = Run.new(client: Client.new(options[:url]), store: options[:store], restaurant_id: restaurant.fetch("id"),
-                      product_id: load_dataset("products").first.fetch("id"),
-                      scenarios: scenarios(max_attempts: options[:max_attempts]), timeout: options[:timeout],
-                      out: out).call
-    results.all?(&:passed?) ? 0 : 1
+    run = Run.new(client: Client.new(options[:url]), store: options[:store], restaurant_id: restaurant.fetch("id"),
+                  product_id: load_dataset("products").first.fetch("id"),
+                  scenarios: scenarios(max_attempts: options[:max_attempts]), timeout: options[:timeout], out: out)
+    results = run.call
+    # A store left in another mode keeps failing the orders that come after.
+    results.all?(&:passed?) && run.restored? ? 0 : 1
   rescue Error => e
     out.puts
     out.puts "Demo stopped: #{e.message}"

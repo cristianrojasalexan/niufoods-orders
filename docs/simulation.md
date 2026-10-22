@@ -97,16 +97,16 @@ ruby script/demo_scenarios.rb --store LCON --timeout 200   # otra tienda, más t
 | `--url` | `http://localhost:3000` | URL base de la API y las tiendas. También se puede definir con `SIMULATION_URL`. |
 | `--store` | `PROV` | Tienda del dataset que usan los escenarios. |
 | `--timeout` | `120` | Segundos máximos de espera por escenario. |
-| `--max-attempts` | `5` | El `MAX_ATTEMPTS_PER_CYCLE` de la API, que define los intentos esperados del escenario `down`. |
+| `--max-attempts` | `5` (o `MAX_ATTEMPTS_PER_CYCLE`) | El `MAX_ATTEMPTS_PER_CYCLE` de la API, que define los intentos esperados de `down`. Con un límite menor que 3, `flaky:2` no alcanza a entregar la orden y se espera `failed` al agotar los intentos. |
 
 **Qué verifica:** para cada escenario compara lo esperado con lo obtenido en tres cosas:
 - el estado final del despacho;
 - los intentos del ciclo;
 - lo que registró la tienda (`GET /simulated_stores/:code/orders`): si la recibió y cuántas solicitudes le llegaron.
 
-Así se comprueba también que los reintentos no duplican la orden en la tienda. El código de salida es `0` si los cuatro escenarios pasan y `1` si alguno no.
+Así se comprueba también que los reintentos no duplican la orden en la tienda. El código de salida es `0` solo si los cuatro escenarios pasan **y** la tienda volvió a su modo original. En cualquier otro caso es `1`, porque una tienda que queda, por ejemplo, en `down` seguiría rechazando las órdenes siguientes.
 
-**Deja la tienda como estaba:** guarda el modo original de la tienda y lo restaura en un `ensure`, aunque un escenario falle, la API deje de responder o se interrumpa con Ctrl-C.
+**Deja la tienda como estaba:** guarda el modo original de la tienda y lo restaura en un `ensure`, aunque un escenario falle, la API deje de responder o se interrumpa con Ctrl-C. Si no lo logra, lo informa con el comando `curl` para restaurarlo a mano y termina con código `1`.
 
 **Requisitos y tiempos:** necesita la API, Sidekiq y las tiendas corriendo (`docker compose up` o `bin/dev`). Los dos usan `DISPATCH_RETRY_BASE_SECONDS=2`, así que el escenario `down` espera 2 + 4 + 8 + 16 = 30 s entre intentos, más lo que tarda Sidekiq en tomar cada reintento programado. La demo completa toma alrededor de un minuto. Con la base por defecto de 10 s, `down` espera 150 s: en ese caso hay que usar `--timeout 200`.
 
