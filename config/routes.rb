@@ -22,6 +22,10 @@ Rails.application.routes.draw do
     post :redispatch, on: :member
   end
 
+  # Control panel of the simulated stores, to reproduce dispatch failures
+  # from the browser.
+  resources :stores, only: %i[index update], param: :code
+
   # Simulated restaurant stores that receive the dispatched orders.
   scope "simulated_stores/:code", module: :store_simulator, as: :simulated_store,
                                   constraints: { code: /[A-Z]+/ }, defaults: { format: :json } do

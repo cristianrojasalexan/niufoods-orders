@@ -41,25 +41,64 @@
 <% end %>
 
 <%= turbo_frame_tag "orders", data: { turbo_action: "advance" } do %>
-  <% if @live %>
-    <p data-controller="auto-refresh" class="mt-4 flex items-center gap-2 text-xs text-slate-500">
-      <span class="relative flex h-2 w-2">
-        <span class="absolute inline-flex h-full w-full animate-ping rounded-full bg-sky-400 opacity-75"></span>
-        <span class="relative inline-flex h-2 w-2 rounded-full bg-sky-500"></span>
-      </span>
-      Hay despachos en curso: la lista se actualiza sola.
-    </p>
+  <%# Always refreshing, faster while dispatches are moving, so new orders show up too %>
+  <p data-controller="auto-refresh" data-auto-refresh-interval-value="<%= @live ? 3000 : 15000 %>"
+     class="mt-4 flex items-center gap-2 text-xs text-slate-500">
+    <span class="relative flex h-2 w-2">
+      <% if @live %>
+        <span class="absolute inline-flex h-full w-full rounded-full bg-sky-400 opacity-75 motion-safe:animate-ping"></span>
+      <% end %>
+      <span class="relative inline-flex h-2 w-2 rounded-full <%= @live ? "bg-sky-500" : "bg-slate-300" %>"></span>
+    </span>
+    <%= @live ? "Hay despachos en curso: la lista se actualiza cada 3 s." : "Sin despachos en curso: la lista se actualiza cada 15 s." %>
+  </p>
+
+  <%# What needs someone's attention, whatever the filters %>
+  <% if @failed_count.positive? && @filters[:status] != "failed" %>
+    <div role="alert" class="mt-4 flex flex-wrap items-center justify-between gap-2 rounded-lg border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-900">
+      <span><strong><%= pluralize(@failed_count, "orden", plural: "órdenes") %> con error</strong> no <%= @failed_count == 1 ? "llegó" : "llegaron" %> a su tienda y <%= @failed_count == 1 ? "requiere" : "requieren" %> atención.</span>
+      <%= link_to "Ver órdenes con error →", orders_path(status: "failed"), data: { turbo_frame: "_top" },
+                  class: "font-medium underline hover:text-rose-700 focus-visible:outline focus-visible:outline-2 focus-visible:outline-rose-500" %>
+    </div>
   <% end %>
+  <% if @degraded_stores.any? %>
+    <div class="mt-4 flex flex-wrap items-center justify-between gap-2 rounded-lg border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-900">
+      <span>
+        Simulación activa:
+        <%= safe_join(@degraded_stores.map { |restaurant| "#{restaurant.name} (#{store_mode_label(StoreSimulator::Mode.current(restaurant.code))})" }, ", ") %>
+        no <%= @degraded_stores.one? ? "acepta" : "aceptan" %> todas las órdenes.
+      </span>
+      <%= link_to "Cambiar en Tiendas →", stores_path, data: { turbo_frame: "_top" },
+                  class: "font-medium underline hover:text-amber-700 focus-visible:outline focus-visible:outline-2 focus-visible:outline-rose-500" %>
+    </div>
+  <% end %>
+
+  <%# Today, in the time zone of the restaurants %>
+  <dl class="mt-4 grid grid-cols-2 gap-3 sm:grid-cols-4" aria-label="Resumen de hoy">
+    <% [ [ "Órdenes de hoy", @summary.orders ],
+         [ "Monto de hoy", clp(@summary.amount) ],
+         [ "Entregadas a tienda", @summary.delivery_rate ? number_to_percentage(@summary.delivery_rate * 100, precision: 0) : "—" ],
+         [ "Tiempo medio de entrega", @summary.average_delivery_seconds ? duration_label(@summary.average_delivery_seconds) : "—" ] ].each do |label, value| %>
+      <div class="rounded-lg bg-slate-100/70 px-4 py-2">
+        <dt class="text-xs text-slate-500"><%= label %></dt>
+        <dd class="font-semibold tabular-nums"><%= value %></dd>
+      </div>
+    <% end %>
+  </dl>
 
   <%# Summary by dispatch status, also used as filters. The cards load the whole page, so the
       status kept by the filter form changes too. %>
   <nav class="mt-4 grid grid-cols-2 gap-3 sm:grid-cols-5" aria-label="Filtrar por estado de despacho">
+    <%# Read by screen readers when a refresh changes the counts %>
+    <p class="sr-only" aria-live="polite">
+      <%= Order.dispatch_statuses.keys.map { |status| "#{dispatch_status_label(status)}: #{@status_counts.fetch(status, 0)}" }.join(", ") %>
+    </p>
     <% cards = [ [ nil, "Todas", @status_counts.values.sum ] ] +
                Order.dispatch_statuses.keys.map { |status| [ status, dispatch_status_label(status), @status_counts.fetch(status, 0) ] } %>
     <% cards.each do |status, label, count| %>
       <% active = status == @filters[:status] %>
       <%= link_to orders_path(@filters.merge(status: status).compact),
-                  class: "rounded-lg border px-4 py-3 #{active ? 'border-rose-400 bg-rose-50 ring-1 ring-rose-400' : 'border-slate-200 bg-white hover:border-slate-300'}",
+                  class: "rounded-lg border px-4 py-3 focus-visible:outline focus-visible:outline-2 focus-visible:outline-rose-500 #{active ? 'border-rose-400 bg-rose-50 ring-1 ring-rose-400' : 'border-slate-200 bg-white hover:border-slate-300'}",
                   aria: { current: (active ? "page" : nil) }, data: { turbo_frame: "_top" } do %>
         <span class="block text-xs font-medium uppercase tracking-wide text-slate-500"><%= label %></span>
         <span class="mt-1 block text-2xl font-semibold tabular-nums"><%= count %></span>
@@ -83,11 +122,12 @@
           </thead>
           <tbody class="divide-y divide-slate-100">
             <% @orders.each do |order| %>
-              <tr id="<%= dom_id(order) %>" class="cursor-pointer hover:bg-slate-50"
-                  data-controller="row-link" data-row-link-url-value="<%= order_path(order) %>" data-action="click->row-link#open">
+              <tr id="<%= dom_id(order) %>" class="cursor-pointer transition-colors duration-700 hover:bg-slate-50 motion-reduce:transition-none"
+                  data-controller="row-link highlight" data-row-link-url-value="<%= order_path(order) %>" data-action="click->row-link#open"
+                  data-highlight-state-value="<%= order.dispatch_status %>:<%= order.dispatch_attempts_count %>">
                 <td class="whitespace-nowrap px-4 py-3 font-mono font-medium">
                   <%= link_to order.number, order_path(order), data: { turbo_frame: "_top" },
-                                                               class: "text-rose-600 hover:text-rose-800 hover:underline" %>
+                                                               class: "rounded text-rose-600 hover:text-rose-800 hover:underline focus-visible:outline focus-visible:outline-2 focus-visible:outline-rose-500" %>
                 </td>
                 <td class="whitespace-nowrap px-4 py-3"><%= order.restaurant.name %></td>
                 <td class="whitespace-nowrap px-4 py-3 text-right tabular-nums"><%= clp(order.total_amount) %></td>

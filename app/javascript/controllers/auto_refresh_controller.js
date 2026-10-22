@@ -1,10 +1,10 @@
 import { Controller } from "@hotwired/stimulus"
 import { Turbo } from "@hotwired/turbo-rails"
 
-// Refreshes the page every few seconds while it shows dispatches in
-// progress. The server only renders this controller while some dispatch is
-// pending or being sent, so the refreshes stop by themselves once all of
-// them end. Refreshes are morphs (see the layout): only what changed is
+// Refreshes the page every few seconds. The server sets the interval: short
+// while some dispatch is pending or being sent, longer otherwise, so new
+// orders still show up. Pages that cannot change anymore do not render this
+// controller. Refreshes are morphs (see the layout): only what changed is
 // replaced and the scroll position is kept.
 export default class extends Controller {
   static values = { interval: { type: Number, default: 3000 } }

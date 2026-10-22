@@ -176,23 +176,78 @@ RSpec.describe "Orders dashboard", type: :request do
       Nokogiri::HTML(response.body).css("[data-controller='auto-refresh']")
     end
 
-    it "refreshes itself while some dispatch is pending or being sent" do
+    it "refreshes itself every 3 s while some dispatch is pending or being sent" do
       order_with("dispatched")
       order_with("dispatching")
 
       get orders_path
 
-      expect(live_indicator.text).to include("la lista se actualiza sola")
+      expect(live_indicator.sole["data-auto-refresh-interval-value"]).to eq("3000")
+      expect(live_indicator.text).to include("Hay despachos en curso")
     end
 
-    it "does not refresh itself once every dispatch ended" do
+    it "keeps refreshing every 15 s once every dispatch ended, so new orders show up" do
       order_with("dispatched")
       order_with("failed")
 
       get orders_path
 
-      expect(live_indicator).to be_empty
+      expect(live_indicator.sole["data-auto-refresh-interval-value"]).to eq("15000")
+      expect(live_indicator.text).to include("Sin despachos en curso")
     end
+  end
+
+  describe "attention and daily figures" do
+    def page
+      Nokogiri::HTML(response.body)
+    end
+
+    it "warns about failed orders and links to them" do
+      2.times { order_with("failed") }
+      order_with("dispatched")
+
+      get orders_path
+
+      warning = page.css("[role='alert']").sole
+      expect(warning.text.squish).to include("2 órdenes con error", "requieren atención")
+      expect(warning.css("a").sole["href"]).to eq(orders_path(status: "failed"))
+    end
+
+    it "does not repeat the warning while showing the failed orders" do
+      order_with("failed")
+
+      get orders_path(status: "failed")
+
+      expect(page.css("[role='alert']")).to be_empty
+    end
+
+    it "says which simulated stores do not accept every order" do
+      restaurant
+      StoreSimulator::Mode.change!("LCON", "down")
+
+      get orders_path
+
+      expect(response.body).to include("Simulación activa:", "Niu Foods Las Condes (Caída)", "Cambiar en Tiendas")
+    end
+
+    it "shows the figures of today" do
+      order_with("dispatched")
+
+      get orders_path
+
+      figures = page.css("dl[aria-label='Resumen de hoy'] > div").to_h { |figure| [ figure.css("dt").text, figure.css("dd").text ] }
+      expect(figures.keys).to eq([ "Órdenes de hoy", "Monto de hoy", "Entregadas a tienda", "Tiempo medio de entrega" ])
+      expect(figures).to include("Órdenes de hoy" => "1", "Entregadas a tienda" => "100%")
+    end
+  end
+
+  it "tells the live refresh the dispatch state of each row, to highlight changes" do
+    order = order_with("pending")
+    order.update_columns(dispatch_attempts_count: 2)
+
+    get orders_path
+
+    expect(rows.sole["data-highlight-state-value"]).to eq("pending:2")
   end
 
   it "makes each row open its order" do

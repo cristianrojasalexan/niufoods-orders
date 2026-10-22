@@ -1,0 +1,87 @@
+<% content_for :title, "Tiendas simuladas · Niufoods" %>
+
+<div class="flex flex-wrap items-end justify-between gap-4">
+  <div>
+    <h1 class="text-2xl font-semibold tracking-tight">Tiendas simuladas</h1>
+    <p class="mt-1 max-w-3xl text-sm text-slate-500">
+      Cada restaurante recibe sus órdenes en una tienda simulada dentro de esta misma app. Cambia cómo responde una tienda
+      para ver los reintentos y los errores de despacho; en producción, cada restaurante apuntaría a su sistema real.
+    </p>
+  </div>
+  <%= link_to "Actualizar", stores_path, class: "rounded-md bg-white px-3 py-2 text-sm font-medium shadow-sm ring-1 ring-inset ring-slate-300 hover:bg-slate-50 focus-visible:outline focus-visible:outline-2 focus-visible:outline-rose-500" %>
+</div>
+
+<p data-controller="auto-refresh" data-auto-refresh-interval-value="<%= @live ? 3000 : 15000 %>"
+   class="mt-4 flex items-center gap-2 text-xs text-slate-500">
+  <span class="relative flex h-2 w-2">
+    <% if @live %>
+      <span class="absolute inline-flex h-full w-full rounded-full bg-sky-400 opacity-75 motion-safe:animate-ping"></span>
+    <% end %>
+    <span class="relative inline-flex h-2 w-2 rounded-full <%= @live ? "bg-sky-500" : "bg-slate-300" %>"></span>
+  </span>
+  <%= @live ? "Hay despachos en curso: esta página se actualiza cada 3 s." : "Esta página se actualiza cada 15 s." %>
+</p>
+
+<div class="mt-6 grid gap-6 lg:grid-cols-3">
+  <% @restaurants.each do |restaurant| %>
+    <% mode = @modes.fetch(restaurant.code) %>
+    <section id="store_<%= restaurant.code %>" class="flex flex-col rounded-lg border border-slate-200 bg-white shadow-sm"
+             aria-labelledby="store_<%= restaurant.code %>_title">
+      <div class="border-b border-slate-200 px-4 py-3">
+        <div class="flex items-center justify-between gap-3">
+          <h2 id="store_<%= restaurant.code %>_title" class="font-semibold"><%= restaurant.name %></h2>
+          <%= store_mode_badge(mode) %>
+        </div>
+        <p class="mt-1 font-mono text-xs text-slate-400"><%= restaurant.code %></p>
+      </div>
+
+      <div class="px-4 py-4">
+        <p class="text-sm text-slate-600"><%= StoresHelper::STORE_MODE_DESCRIPTIONS.fetch(mode, "Modo configurado con STORE_MODES.") %></p>
+        <div class="mt-3 flex flex-wrap gap-2" role="group" aria-label="Modo de <%= restaurant.name %>">
+          <% StoresController::MODES.each do |value, label| %>
+            <% current = value == mode %>
+            <%= button_to label, store_path(restaurant.code), method: :patch, params: { mode: value }, disabled: current,
+                          title: StoresHelper::STORE_MODE_DESCRIPTIONS.fetch(value), aria: { pressed: current },
+                          class: "rounded-md px-3 py-1.5 text-sm font-medium focus-visible:outline focus-visible:outline-2 focus-visible:outline-rose-500 " \
+                                 "#{current ? 'cursor-default bg-slate-900 text-white' : 'bg-white ring-1 ring-inset ring-slate-300 hover:bg-slate-50'}" %>
+          <% end %>
+        </div>
+      </div>
+
+      <dl class="grid grid-cols-2 border-t border-slate-200 text-center">
+        <div class="px-4 py-3">
+          <dt class="text-xs font-medium uppercase tracking-wide text-slate-500">Órdenes recibidas</dt>
+          <dd class="mt-1 text-2xl font-semibold tabular-nums"><%= @received_counts.fetch(restaurant.code, 0) %></dd>
+        </div>
+        <div class="border-l border-slate-200 px-4 py-3">
+          <dt class="text-xs font-medium uppercase tracking-wide text-slate-500">Solicitudes</dt>
+          <dd class="mt-1 text-2xl font-semibold tabular-nums"><%= @request_counts.fetch(restaurant.code, 0) %></dd>
+        </div>
+      </dl>
+
+      <div class="flex-1 border-t border-slate-200 px-4 py-3">
+        <h3 class="text-xs font-medium uppercase tracking-wide text-slate-500">Últimas recibidas</h3>
+        <% if @recent.fetch(restaurant.code).any? %>
+          <ul class="mt-2 divide-y divide-slate-100 text-sm">
+            <% @recent.fetch(restaurant.code).each do |request| %>
+              <li class="flex items-center justify-between gap-3 py-1.5">
+                <span class="font-mono"><%= request.idempotency_key %></span>
+                <span class="text-xs text-slate-500">
+                  <%= pluralize(request.attempts, "solicitud", plural: "solicitudes") %> · <%= relative_time(request.received_at) %>
+                </span>
+              </li>
+            <% end %>
+          </ul>
+        <% else %>
+          <p class="mt-2 text-sm text-slate-500">Todavía no recibe órdenes.</p>
+        <% end %>
+      </div>
+    </section>
+  <% end %>
+</div>
+
+<p class="mt-6 text-sm text-slate-500">
+  Para ver un modo en acción, crea órdenes con <code class="rounded bg-slate-100 px-1.5 py-0.5">ruby script/simulate_orders.rb</code>
+  y sigue su despacho en <%= link_to "Órdenes", orders_path, class: "underline hover:text-slate-900" %>.
+  Una orden recibida varias veces cuenta una sola: la tienda deduplica por número de orden.
+</p>

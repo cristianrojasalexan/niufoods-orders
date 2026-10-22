@@ -70,6 +70,10 @@ El modo se resuelve en este orden:
 
 ### Consultar y cambiar el modo
 
+Desde el navegador, en la página **Tiendas** (`/stores`): muestra el modo de cada tienda, lo que recibió y botones para cambiarlo a `ok`, `flaky:2`, `reject` o `down`. Otros valores, como `flaky:3`, se pueden poner por HTTP o con `STORE_MODES`.
+
+Por HTTP:
+
 ```bash
 curl http://localhost:3000/simulated_stores/LCON/mode
 # {"store":"LCON","mode":"ok"}

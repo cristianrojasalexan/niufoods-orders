@@ -34,7 +34,8 @@
           <span class="text-lg font-semibold tracking-tight">Niufoods <span class="font-normal text-slate-500">· Órdenes</span></span>
         <% end %>
         <nav class="flex items-center gap-4 text-sm text-slate-600">
-          <%= link_to "Órdenes", root_path, class: "hover:text-slate-900" %>
+          <%= link_to "Órdenes", root_path, class: "hover:text-slate-900 #{'font-medium text-slate-900' if controller_name == 'orders'}" %>
+          <%= link_to "Tiendas", stores_path, class: "hover:text-slate-900 #{'font-medium text-slate-900' if controller_name == 'stores'}" %>
           <%= link_to "Sidekiq", "/sidekiq", class: "hover:text-slate-900" if Rails.env.development? %>
         </nav>
       </div>

@@ -19,6 +19,11 @@ class OrdersController < ApplicationController
 
     orders = orders.where(dispatch_status: @filters[:status]) if @filters[:status]
     @pagy, @orders = pagy(:offset, orders.includes(:restaurant))
+
+    # What needs attention, whatever the filters.
+    @summary = Orders::DailySummary.call
+    @failed_count = Order.dispatch_failed.count
+    @degraded_stores = @restaurants.reject { |restaurant| StoreSimulator::Mode.current(restaurant.code) == "ok" }
   end
 
   def show

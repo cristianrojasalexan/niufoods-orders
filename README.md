@@ -54,9 +54,11 @@ Después abre:
 
 | URL | Qué hay |
 |---|---|
-| http://localhost:3000 | Dashboard de órdenes, con filtro por estado y detalle de cada orden. |
+| http://localhost:3000 | Dashboard de órdenes, en vivo, con filtros y el detalle de cada orden. |
+| http://localhost:3000/stores | Tiendas simuladas: cambiar cómo responde cada una (por ejemplo, "Caída") y ver lo que recibió. |
 | http://localhost:3000/sidekiq | Colas, reintentos programados y procesos de Sidekiq. |
-| http://localhost:3000/simulated_stores/LCON/orders | Lo que recibió la tienda de Las Condes. |
+
+Para ver reintentos y errores sin usar la terminal: en **Tiendas** pon una tienda en "Inestable" o "Caída", genera órdenes con el script y sigue en el dashboard cómo se reintentan.
 
 Sin Ruby en la máquina, los mismos scripts corren dentro del contenedor: `docker compose exec web ruby script/simulate_orders.rb` (y lo mismo con `script/demo_scenarios.rb`).
 
@@ -210,7 +212,7 @@ Created by order type:   delivery=12, pickup=12
 Total amount created:    $1146940
 ```
 
-**Tiendas simuladas.** Cada restaurante tiene un `dispatch_url` que apunta a `POST /simulated_stores/:code/orders`. Es un endpoint aislado dentro de la misma app, que no usa los modelos de órdenes y guarda su propio estado. Deduplica por `Idempotency-Key` (el número de orden) de forma atómica: aunque la API reenvíe una orden, la tienda la registra una sola vez. Su comportamiento se cambia en caliente:
+**Tiendas simuladas.** Cada restaurante tiene un `dispatch_url` que apunta a `POST /simulated_stores/:code/orders`. Es un endpoint aislado dentro de la misma app, que no usa los modelos de órdenes y guarda su propio estado. Deduplica por `Idempotency-Key` (el número de orden) de forma atómica: aunque la API reenvíe una orden, la tienda la registra una sola vez. Su comportamiento se cambia en caliente, desde la página **Tiendas** (`/stores`) o por HTTP:
 
 ```bash
 curl -X PUT http://localhost:3000/simulated_stores/LCON/mode -H 'Content-Type: application/json' -d '{"mode":"flaky:2"}'
@@ -240,7 +242,10 @@ Más detalle en [docs/simulation.md](docs/simulation.md) y [docs/simulated_store
 
 - **`/`**: tabla con N° de orden, tienda, total en CLP, tipo (Retiro / Delivery), fecha y hora de creación en hora de Santiago (con "hace 3 min" debajo) y estado de despacho (Pendiente / Enviando / Enviada / Error), con la cantidad de intentos cuando hubo reintentos. Pagina de a 25 órdenes con Pagy, y toda la fila abre el detalle de la orden.
 - **Filtros combinables:** búsqueda por número de orden, tienda y tipo de pedido. Las tarjetas superiores muestran el conteo por estado dentro de esos filtros y filtran por estado. Los filtros se aplican mientras se escribe o se elige, sin perder el foco, y quedan en la URL, así que una vista filtrada se puede compartir o recargar.
-- **Actualización en vivo:** mientras haya despachos pendientes o en curso, la página se refresca sola cada 3 s y muestra un indicador. Usa el *morphing* de Turbo 8: solo cambia lo que cambió y se mantiene el scroll. Cuando todos los despachos terminan, deja de consultar al servidor; en una pestaña oculta espera a que vuelva a estar visible.
+- **Actualización en vivo:** la página se refresca sola, cada 3 s mientras haya despachos pendientes o en curso y cada 15 s si no, para que aparezcan las órdenes nuevas. Usa el *morphing* de Turbo 8: solo cambia lo que cambió y se mantiene el scroll. Las filas que aparecen o cambian de estado se iluminan un momento. En una pestaña oculta espera a que vuelva a estar visible.
+- **Lo que requiere atención:** un aviso con las órdenes con error y un enlace a ellas, otro si alguna tienda simulada no está aceptando órdenes, y los indicadores del día: órdenes, monto, porcentaje entregado a tienda y tiempo medio de entrega.
+- **`/stores`**: panel de las tiendas simuladas, con su modo actual, botones para cambiarlo (Acepta / Inestable / Rechaza / Caída) y las últimas órdenes que recibió cada una.
+- **Accesibilidad:** los conteos se anuncian a lectores de pantalla cuando cambian, el foco del teclado es visible y las animaciones se desactivan si el sistema pide reducir el movimiento.
 - **`/orders/:id`**: productos con cantidad, precio unitario y subtotal; datos del cliente y dirección; y los intentos de despacho como una **línea de tiempo por ciclo**, con resultado, código HTTP, duración, error y el tiempo entre intentos, donde se ve crecer la espera del *backoff*. Mientras el despacho sigue en curso, muestra el próximo intento y se actualiza sola.
 - **Reintentar despacho**: el botón aparece solo en órdenes `failed`, pide confirmación y muestra "Reintentando…" mientras se envía. Abre un ciclo nuevo de intentos, y solo se aplica si la orden sigue `failed` en el mismo ciclo que mostraba la página, así que varios clics, o un clic desde una página desactualizada, abren a lo sumo un ciclo nuevo.
 
