@@ -17,6 +17,7 @@ stateDiagram-v2
     dispatching --> dispatched: 2xx
     dispatching --> pending: transitorio<br/>y quedan intentos
     dispatching --> failed: permanente<br/>o último intento
+    failed --> pending: reintento manual<br/>(ciclo nuevo)
     dispatched --> [*]
 ```
 
@@ -25,7 +26,7 @@ stateDiagram-v2
 | `pending` | Esperando un intento de despacho, el primero o un reintento programado para `next_dispatch_at`. |
 | `dispatching` | Un worker la tiene tomada y la está enviando. Si la lease vence, otro worker puede retomarla sin salir de este estado. |
 | `dispatched` | La tienda la recibió (`dispatched_at`). |
-| `failed` | No se pudo entregar; `last_dispatch_error` indica el motivo. |
+| `failed` | No se pudo entregar; `last_dispatch_error` indica el motivo. Se puede reintentar a mano desde el dashboard. |
 
 ## Un intento, en tres pasos
 
@@ -130,6 +131,27 @@ bin/rails orders:recover_dispatch   # una sola ronda, por ejemplo desde un cron
 ```
 
 **Limitación conocida:** no hay *transactional outbox*. Entre el commit de una orden y el encolado de su job hay una ventana en la que una falla de Redis deja la orden sin job hasta la siguiente ronda de recuperación. Un outbox, es decir, una tabla de eventos escrita en la misma transacción y publicada por un proceso aparte, cerraría esa ventana; quedó como trabajo futuro. Si se necesitara programar la recuperación dentro de Sidekiq, `sidekiq-cron` es una alternativa al proceso propio.
+
+## Reintento manual
+
+Una orden `failed` se puede reintentar con el botón **"Reintentar despacho"** de su detalle en el dashboard (`POST /orders/:id/redispatch`). Por ejemplo, después de que la tienda vuelva a estar disponible o se corrija lo que la hizo rechazar la orden.
+
+`Orders::Redispatch` abre un **ciclo nuevo** con un solo `UPDATE` condicionado:
+
+```sql
+UPDATE orders
+SET dispatch_status = 'pending', dispatch_cycle = dispatch_cycle + 1,
+    dispatch_attempts_count = 0, next_dispatch_at = now(),
+    dispatch_token = NULL, dispatch_lease_expires_at = NULL
+WHERE id = :id AND dispatch_status = 'failed'
+RETURNING dispatch_cycle
+```
+
+- **Solo desde `failed`.** Si la orden está `pending`, `dispatching` o `dispatched`, el `UPDATE` no afecta ninguna fila y no se encola nada: nunca se le quita la orden a un worker que la está enviando ni se envía de nuevo una orden entregada. El dashboard avisa que no se reintentó.
+- **Un solo ciclo por clic, aunque haya varios a la vez.** Si dos personas hacen clic al mismo tiempo, PostgreSQL serializa los dos `UPDATE` sobre la fila: el primero la reabre y el segundo ya no la encuentra en `failed`. Un spec con threads concurrentes verifica que se abre un solo ciclo y se encola un solo job.
+- **Presupuesto nuevo.** El ciclo nuevo parte con los intentos en 0, así que vuelve a tener `MAX_ATTEMPTS_PER_CYCLE` intentos. Los intentos de los ciclos anteriores quedan en `dispatch_attempts` y el detalle de la orden los muestra agrupados por ciclo.
+- **Encolado después del commit**, igual que al crear la orden. Si Redis no está disponible, la orden ya quedó `pending` y vencida, y la recuperación la encola cuando Redis vuelva.
+- La tienda recibe la orden con la misma `Idempotency-Key` (el número de la orden). Si en el ciclo anterior la orden sí había llegado, por ejemplo porque se perdió la respuesta, la tienda responde `duplicate` y no la procesa dos veces.
 
 ## Auditoría
 

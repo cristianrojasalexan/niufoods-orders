@@ -39,7 +39,9 @@
         <tbody class="divide-y divide-slate-100">
           <% @orders.each do |order| %>
             <tr id="<%= dom_id(order) %>" class="hover:bg-slate-50">
-              <td class="whitespace-nowrap px-4 py-3 font-mono font-medium"><%= order.number %></td>
+              <td class="whitespace-nowrap px-4 py-3 font-mono font-medium">
+                <%= link_to order.number, order_path(order), class: "text-rose-600 hover:text-rose-800 hover:underline" %>
+              </td>
               <td class="whitespace-nowrap px-4 py-3"><%= order.restaurant.name %></td>
               <td class="whitespace-nowrap px-4 py-3 text-right tabular-nums"><%= clp(order.total_amount) %></td>
               <td class="whitespace-nowrap px-4 py-3"><%= order_type_label(order) %></td>

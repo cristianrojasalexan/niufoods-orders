@@ -18,4 +18,20 @@ RSpec.describe OrdersHelper do
     expect(Order.dispatch_statuses.keys.map { |status| helper.dispatch_status_label(status) })
       .to eq(%w[Pendiente Enviando Enviada Error])
   end
+
+  it "labels every dispatch attempt outcome" do
+    labels = DispatchAttempt.outcomes.keys.map { |outcome| helper.dispatch_outcome_badge(DispatchAttempt.new(outcome: outcome)) }
+
+    expect(labels.map { |badge| Nokogiri::HTML.fragment(badge).text })
+      .to eq([ "Entregada", "Falla transitoria", "Rechazada", "Descartado" ])
+  end
+
+  it "groups the attempts by cycle, the latest cycle first" do
+    order = build(:order)
+    order.dispatch_attempts.build([ { dispatch_cycle: 1, attempt_number: 1 }, { dispatch_cycle: 2, attempt_number: 1 },
+                                    { dispatch_cycle: 1, attempt_number: 2 } ])
+
+    expect(helper.attempts_by_cycle(order).map { |cycle, attempts| [ cycle, attempts.map(&:attempt_number) ] })
+      .to eq([ [ 2, [ 1 ] ], [ 1, [ 1, 2 ] ] ])
+  end
 end

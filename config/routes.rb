@@ -16,9 +16,11 @@ Rails.application.routes.draw do
     mount Sidekiq::Web => "/sidekiq"
   end
 
-  # Dashboard to review the orders.
+  # Dashboard to review the orders and retry a failed dispatch.
   root "orders#index"
-  resources :orders, only: :index
+  resources :orders, only: %i[index show] do
+    post :redispatch, on: :member
+  end
 
   # Simulated restaurant stores that receive the dispatched orders.
   scope "simulated_stores/:code", module: :store_simulator, as: :simulated_store,
