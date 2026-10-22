@@ -27,8 +27,11 @@ export default class extends Controller {
   }
 
   refresh() {
-    // A hidden tab waits until it is visible again instead of polling.
-    if (document.hidden) {
+    // A search still being typed would be overwritten; try again later.
+    if (document.querySelector("form[data-pending]")) {
+      this.schedule()
+    } else if (document.hidden) {
+      // A hidden tab waits until it is visible again instead of polling.
       document.addEventListener("visibilitychange", () => this.refresh(), { once: true })
     } else {
       Turbo.visit(window.location.href, { action: "replace" })

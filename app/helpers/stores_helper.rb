@@ -12,13 +12,21 @@ module StoresHelper
     "down" => "bg-rose-50 text-rose-800 ring-rose-600/20"
   }.freeze
 
-  # Simulated stores that do not accept every order, with their mode, for
-  # the notice shown on every page.
-  def degraded_simulated_stores
-    @degraded_simulated_stores ||= Restaurant.order(:id).filter_map do |restaurant|
-      mode = StoreSimulator::Mode.current(restaurant.code)
-      [ restaurant, mode ] unless mode == "ok"
+  # Every restaurant with the mode of its simulated store, read once per
+  # request: the notice on every page and the stores panel share it.
+  def simulated_store_modes
+    @simulated_store_modes ||= begin
+      restaurants = Restaurant.order(:id).to_a
+      modes = StoreSimulator::Mode.current_for(restaurants.map(&:code))
+      restaurants.to_h { |restaurant| [ restaurant, modes.fetch(restaurant.code) ] }
     end
+  end
+
+  # Simulated stores that do not accept every order, for the notice shown on
+  # every page.
+  def degraded_simulated_stores
+    @degraded_simulated_stores ||=
+      simulated_store_modes.reject { |_restaurant, mode| StoreSimulator::Mode.accepts_every_order?(mode) }
   end
 
   # Modes set through STORE_MODES that the panel does not offer, such as

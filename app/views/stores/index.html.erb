@@ -16,8 +16,7 @@
 
 
 <div class="mt-6 grid gap-6 lg:grid-cols-3">
-  <% @restaurants.each do |restaurant| %>
-    <% mode = @modes.fetch(restaurant.code) %>
+  <% simulated_store_modes.each do |restaurant, mode| %>
     <section id="store_<%= restaurant.code %>" class="flex flex-col rounded-lg border border-slate-200 bg-white shadow-sm"
              aria-labelledby="store_<%= restaurant.code %>_title">
       <div class="border-b border-slate-200 px-4 py-3">
@@ -54,9 +53,10 @@
 
       <div class="flex-1 border-t border-slate-200 px-4 py-3">
         <h3 class="text-xs font-medium uppercase tracking-wide text-slate-500">Últimas recibidas</h3>
-        <% if @recent.fetch(restaurant.code).any? %>
+        <% recent = @recent.fetch(restaurant.code, []) %>
+        <% if recent.any? %>
           <ul class="mt-2 divide-y divide-slate-100 text-sm">
-            <% @recent.fetch(restaurant.code).each do |request| %>
+            <% recent.each do |request| %>
               <li class="flex items-center justify-between gap-3 py-1.5">
                 <span class="font-mono"><%= request.idempotency_key %></span>
                 <span class="text-xs text-slate-500">

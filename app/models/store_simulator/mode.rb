@@ -19,7 +19,20 @@ module StoreSimulator
     validates :mode, format: { with: FORMAT, message: "must be ok, reject, down or flaky:N" }
 
     def self.current(store_code)
-      find_by(store_code: store_code)&.mode || defaults.fetch(store_code, DEFAULT)
+      current_for([ store_code ]).fetch(store_code)
+    end
+
+    # The modes of several stores in one query, as { code => mode }.
+    def self.current_for(store_codes)
+      saved = where(store_code: store_codes).pluck(:store_code, :mode).to_h
+      fallback = defaults
+      store_codes.index_with { |code| saved[code] || fallback.fetch(code, DEFAULT) }
+    end
+
+    # Whether a store in this mode accepts every order on its first attempt,
+    # as ok does, and flaky:0, which fails no attempt.
+    def self.accepts_every_order?(mode)
+      mode == DEFAULT || mode.match?(/\Aflaky:0+\z/)
     end
 
     # A single upsert, so concurrent first changes of the same store do not

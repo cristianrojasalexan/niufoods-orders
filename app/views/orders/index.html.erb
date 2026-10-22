@@ -21,8 +21,10 @@
   </div>
 <% end %>
 
-<%# Outside the frame, so typing in the search keeps the focus while the results update %>
-<%= form_with url: orders_path, method: :get, html: { role: "search" },
+<%# Outside the frame, so typing in the search keeps the focus while the results update.
+    It submits to the current path ("/" or "/orders"): the live refresh only morphs the page
+    when the path did not change, and replaces the whole body otherwise. %>
+<%= form_with url: request.path, method: :get, html: { role: "search" },
               data: { controller: "filters", turbo_frame: "orders", turbo_action: "advance" },
               class: "mt-6 flex flex-wrap items-end gap-3" do |form| %>
   <%= form.hidden_field :status, value: @filters[:status], id: nil %>

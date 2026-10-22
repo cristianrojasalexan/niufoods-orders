@@ -21,6 +21,32 @@ RSpec.describe StoreSimulator::Mode do
     end
   end
 
+  describe ".current_for" do
+    it "reads the modes of several stores in one query, with the same fallbacks" do
+      stub_const("ENV", ENV.to_h.merge("STORE_MODES" => "NUNO=down"))
+      described_class.change!("LCON", "reject")
+
+      queries = 0
+      counter = ->(*, event) { queries += 1 unless event[:name] == "SCHEMA" }
+      modes = ActiveSupport::Notifications.subscribed(counter, "sql.active_record") do
+        described_class.current_for(%w[PROV LCON NUNO])
+      end
+
+      expect(modes).to eq("PROV" => "ok", "LCON" => "reject", "NUNO" => "down")
+      expect(queries).to eq(1)
+    end
+  end
+
+  describe ".accepts_every_order?" do
+    it "is true for the modes that fail no attempt" do
+      expect(%w[ok flaky:0 flaky:00].map { |mode| described_class.accepts_every_order?(mode) }).to all(be(true))
+    end
+
+    it "is false for the modes that fail some attempt" do
+      expect(%w[flaky:1 flaky:2 reject down].map { |mode| described_class.accepts_every_order?(mode) }).to all(be(false))
+    end
+  end
+
   describe ".defaults" do
     it "ignores invalid entries" do
       expect(described_class.defaults("PROV=ok,lcon=down,NUNO=sometimes,,=ok,LCON")).to eq("PROV" => "ok")

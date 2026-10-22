@@ -49,9 +49,39 @@ RSpec.describe "Simulated stores panel", type: :request do
     end
 
     it "shows no simulation notice while every store accepts every order" do
+      StoreSimulator::Mode.change!("NUNO", "flaky:0")
+
       get stores_path
 
       expect(response.body).not_to include("Modo simulación")
+    end
+
+    it "keeps the last five receptions of each store, the newest first" do
+      7.times { |index| receive("LCON", format("LCON-%06d", index), attempts: 1).update_columns(received_at: index.minutes.from_now) }
+      receive("NUNO", "NUNO-000001")
+
+      get stores_path
+
+      expect(page.css("#store_LCON li span.font-mono").map(&:text)).to eq(%w[LCON-000006 LCON-000005 LCON-000004 LCON-000003 LCON-000002])
+      expect(page.css("#store_NUNO li span.font-mono").map(&:text)).to eq(%w[NUNO-000001])
+    end
+
+    # The queries must not grow with the number of stores: the page refreshes
+    # itself every few seconds.
+    it "runs the same number of queries whatever the number of stores" do
+      receive("LCON", "LCON-000001")
+      receive("NUNO", "NUNO-000001")
+      get stores_path
+      with_two = count_queries { get stores_path }
+
+      %w[PROV ANTO VALP].each do |code|
+        create(:restaurant, code: code)
+        StoreSimulator::Mode.change!(code, "down")
+        receive(code, "#{code}-000001")
+      end
+      with_five = count_queries { get stores_path }
+
+      expect(with_five).to eq(with_two)
     end
 
     it "is linked from the header" do

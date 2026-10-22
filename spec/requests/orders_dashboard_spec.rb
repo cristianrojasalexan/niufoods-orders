@@ -158,6 +158,17 @@ RSpec.describe "Orders dashboard", type: :request do
       expect(Nokogiri::HTML(response.body).css("form[role='search'] input[name='status']").sole["value"]).to eq("dispatched")
     end
 
+    # The live refresh only morphs when the path did not change; a form
+    # that moved from "/" to "/orders" made the next refresh replace the
+    # whole page, losing what was being typed.
+    it "submits the filters to the path the page is on" do
+      [ root_path, orders_path ].each do |path|
+        get path
+
+        expect(Nokogiri::HTML(response.body).css("form[role='search']").sole["action"]).to eq(path)
+      end
+    end
+
     it "ignores unknown values" do
       get orders_path(restaurant: "XXXX", order_type: "drone")
 
@@ -248,6 +259,21 @@ RSpec.describe "Orders dashboard", type: :request do
     get orders_path
 
     expect(rows.sole["data-highlight-state-value"]).to eq("pending:2")
+  end
+
+  it "runs the same number of queries whatever the number of stores" do
+    order_with("pending")
+    get orders_path
+    with_one = count_queries { get orders_path }
+
+    3.times do
+      other = create(:restaurant)
+      StoreSimulator::Mode.change!(other.code, "reject")
+      create(:order, restaurant: other)
+    end
+    with_four = count_queries { get orders_path }
+
+    expect(with_four).to eq(with_one)
   end
 
   it "makes each row open its order" do

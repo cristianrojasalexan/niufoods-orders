@@ -123,6 +123,17 @@ RSpec.describe "Order detail", type: :request do
       expect(page.css("tbody a").map { |link| link["href"] }).to eq([ order_path(order) ])
     end
 
+    it "runs the same number of queries whatever the number of stores" do
+      order = failed_order
+      get order_path(order)
+      with_one = count_queries { get order_path(order) }
+
+      3.times { StoreSimulator::Mode.change!(create(:restaurant).code, "down") }
+      with_four = count_queries { get order_path(order) }
+
+      expect(with_four).to eq(with_one)
+    end
+
     it "answers 404 for an unknown order" do
       get order_path(id: 0)
 

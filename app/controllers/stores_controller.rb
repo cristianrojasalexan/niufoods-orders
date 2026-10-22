@@ -13,17 +13,14 @@ class StoresController < ApplicationController
 
   RECENT_LIMIT = 5
 
+  # The restaurants and their modes come from StoresHelper#simulated_store_modes,
+  # which the notice in the layout uses too.
   def index
-    @restaurants = Restaurant.order(:id)
-    codes = @restaurants.map(&:code)
-    requests = StoreSimulator::Request.where(store_code: codes)
+    requests = StoreSimulator::Request.where(store_code: Restaurant.select(:code))
 
-    @modes = codes.index_with { |code| StoreSimulator::Mode.current(code) }
     @received_counts = requests.received.group(:store_code).count
     @request_counts = requests.group(:store_code).sum(:attempts)
-    @recent = codes.index_with do |code|
-      requests.received.where(store_code: code).order(received_at: :desc).limit(RECENT_LIMIT)
-    end
+    @recent = recent_receptions(requests).group_by(&:store_code)
     @live = Order.where(dispatch_status: OrdersController::ACTIVE_DISPATCH_STATUSES).exists?
   end
 
@@ -38,5 +35,18 @@ class StoresController < ApplicationController
       flash[:alert] = "Modo desconocido: #{mode}."
     end
     redirect_to stores_path, status: :see_other
+  end
+
+  private
+
+  # The last RECENT_LIMIT receptions of every store in a single query,
+  # numbering each store's receptions from the newest.
+  def recent_receptions(requests)
+    ranked = requests.received.select(
+      :id, :store_code, :idempotency_key, :attempts, :received_at,
+      "ROW_NUMBER() OVER (PARTITION BY store_code ORDER BY received_at DESC, id DESC) AS position"
+    )
+    StoreSimulator::Request.from(ranked, :simulated_store_requests)
+                           .where("position <= ?", RECENT_LIMIT).order(received_at: :desc, id: :desc)
   end
 end

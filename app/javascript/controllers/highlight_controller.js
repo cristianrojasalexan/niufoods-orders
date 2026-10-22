@@ -5,8 +5,18 @@ import { Controller } from "@hotwired/stimulus"
 // from the server; a morph updates the attribute and Stimulus calls
 // stateValueChanged.
 let morphing = false
-document.addEventListener("turbo:before-render", (event) => { morphing = event.detail.renderMethod === "morph" })
-document.addEventListener("turbo:morph", () => { morphing = false })
+let reset = null
+document.addEventListener("turbo:before-render", (event) => {
+  // A reset left by an earlier morph must not end this one early.
+  clearTimeout(reset)
+  morphing = event.detail.renderMethod === "morph"
+})
+// turbo:morph fires before Stimulus connects the rows the morph inserted,
+// which happens in a microtask; the flag is cleared after those.
+document.addEventListener("turbo:morph", () => {
+  clearTimeout(reset)
+  reset = setTimeout(() => { morphing = false })
+})
 
 export default class extends Controller {
   static values = { state: String }
