@@ -80,6 +80,7 @@ RSpec.describe "Order detail", type: :request do
 
       expect(response.body).to include("store answered 422")
       expect(page.css("form[action$='/redispatch'] button").text).to eq("Reintentar despacho")
+      expect(page.css("form[action$='/redispatch'] input[name='cycle']").sole["value"]).to eq("1")
     end
 
     it "does not offer to retry an order that is not failed" do
@@ -110,7 +111,7 @@ RSpec.describe "Order detail", type: :request do
     it "opens a new dispatch cycle for a failed order and enqueues it" do
       order = failed_order
 
-      post redispatch_order_path(order)
+      post redispatch_order_path(order), params: { cycle: 1 }
 
       expect(response).to redirect_to(order_path(order))
       expect(response).to have_http_status(:see_other)
@@ -124,10 +125,10 @@ RSpec.describe "Order detail", type: :request do
 
     it "changes nothing when the order is no longer failed" do
       order = failed_order
-      post redispatch_order_path(order)
+      post redispatch_order_path(order), params: { cycle: 1 }
       DispatchOrderJob.clear
 
-      post redispatch_order_path(order)
+      post redispatch_order_path(order), params: { cycle: 1 }
 
       expect(order.reload.dispatch_cycle).to eq(2)
       expect(DispatchOrderJob.jobs).to be_empty
@@ -135,8 +136,24 @@ RSpec.describe "Order detail", type: :request do
       expect(page.css("[role='alert']").text).to include("No se reintentó")
     end
 
+    it "does not open another cycle when the page showed an older one" do
+      order = failed_order
+      order.update_columns(dispatch_cycle: 2)
+
+      post redispatch_order_path(order), params: { cycle: 1 }
+
+      expect(order.reload).to have_attributes(dispatch_status: "failed", dispatch_cycle: 2)
+      expect(DispatchOrderJob.jobs).to be_empty
+    end
+
+    it "answers 400 without the cycle" do
+      post redispatch_order_path(failed_order)
+
+      expect(response).to have_http_status(:bad_request)
+    end
+
     it "answers 404 for an unknown order" do
-      post redispatch_order_path(id: 0)
+      post redispatch_order_path(id: 0), params: { cycle: 1 }
 
       expect(response).to have_http_status(:not_found)
     end

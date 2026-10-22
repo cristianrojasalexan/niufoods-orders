@@ -25,7 +25,7 @@ RSpec.describe Orders::Redispatch, "with concurrent retries" do
       Thread.new do
         ActiveRecord::Base.connection_pool.with_connection do
           barrier.wait(5) || raise("not every retry started")
-          described_class.call(order)
+          described_class.call(order, cycle: 1)
         end
       end
     end.map(&:value)

@@ -77,7 +77,8 @@
   <div class="flex flex-wrap items-center justify-between gap-3 border-b border-slate-200 px-4 py-3">
     <h2 id="dispatch-title" class="font-semibold">Despacho a tienda</h2>
     <% if @order.dispatch_failed? %>
-      <%= button_to "Reintentar despacho", redispatch_order_path(@order),
+      <%# The failed cycle being retried: a second click on the same failure must not open another cycle %>
+      <%= button_to "Reintentar despacho", redispatch_order_path(@order), params: { cycle: @order.dispatch_cycle },
                     class: "rounded-md bg-rose-500 px-3 py-2 text-sm font-medium text-white shadow-sm hover:bg-rose-600" %>
     <% end %>
   </div>

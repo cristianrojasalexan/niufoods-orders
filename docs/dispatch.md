@@ -143,12 +143,13 @@ UPDATE orders
 SET dispatch_status = 'pending', dispatch_cycle = dispatch_cycle + 1,
     dispatch_attempts_count = 0, next_dispatch_at = now(),
     dispatch_token = NULL, dispatch_lease_expires_at = NULL
-WHERE id = :id AND dispatch_status = 'failed'
+WHERE id = :id AND dispatch_status = 'failed' AND dispatch_cycle = :cycle
 RETURNING dispatch_cycle
 ```
 
 - **Solo desde `failed`.** Si la orden está `pending`, `dispatching` o `dispatched`, el `UPDATE` no afecta ninguna fila y no se encola nada: nunca se le quita la orden a un worker que la está enviando ni se envía de nuevo una orden entregada. El dashboard avisa que no se reintentó.
-- **Un solo ciclo por clic, aunque haya varios a la vez.** Si dos personas hacen clic al mismo tiempo, PostgreSQL serializa los dos `UPDATE` sobre la fila: el primero la reabre y el segundo ya no la encuentra en `failed`. Un spec con threads concurrentes verifica que se abre un solo ciclo y se encola un solo job.
+- **Solo el ciclo que se vio.** El formulario envía el ciclo que mostraba la página (`cycle`) y el `UPDATE` lo exige. Revisar solo el estado no basta: si la tienda rechaza rápido el ciclo nuevo, la orden vuelve a `failed` y un segundo clic sobre la misma falla abriría otro ciclo más, reiniciando de nuevo los intentos. Con el ciclo, ese segundo clic no cambia nada; para reintentar el ciclo nuevo hay que verlo primero.
+- **Un solo ciclo nuevo, aunque haya varios clics a la vez.** PostgreSQL serializa los `UPDATE` sobre la fila: el primero la reabre y los demás ya no la encuentran en `failed` con ese ciclo. Un spec con threads concurrentes verifica que se abre un solo ciclo y se encola un solo job, y otro verifica que un clic que llega después de que el ciclo nuevo ya falló tampoco abre otro.
 - **Presupuesto nuevo.** El ciclo nuevo parte con los intentos en 0, así que vuelve a tener `MAX_ATTEMPTS_PER_CYCLE` intentos. Los intentos de los ciclos anteriores quedan en `dispatch_attempts` y el detalle de la orden los muestra agrupados por ciclo.
 - **Encolado después del commit**, igual que al crear la orden. Si Redis no está disponible, la orden ya quedó `pending` y vencida, y la recuperación la encola cuando Redis vuelva.
 - La tienda recibe la orden con la misma `Idempotency-Key` (el número de la orden). Si en el ciclo anterior la orden sí había llegado, por ejemplo porque se perdió la respuesta, la tienda responde `duplicate` y no la procesa dos veces.

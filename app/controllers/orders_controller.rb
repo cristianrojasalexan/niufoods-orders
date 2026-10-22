@@ -16,14 +16,15 @@ class OrdersController < ApplicationController
     @order = Order.includes(:restaurant, :dispatch_attempts, order_items: :product).find(params[:id])
   end
 
-  # Opens a new dispatch cycle, only if the order is still failed when the
-  # click arrives (see Orders::Redispatch).
+  # Opens a new dispatch cycle, only if the order is still failed in the
+  # cycle the form was rendered for (see Orders::Redispatch).
   def redispatch
     order = Order.find(params[:id])
-    if (cycle = Orders::Redispatch.call(order))
+    if (cycle = Orders::Redispatch.call(order, cycle: Integer(params.expect(:cycle), exception: false)))
       flash[:notice] = "Despacho reintentado: la orden se enviará de nuevo a la tienda (ciclo #{cycle})."
     else
-      flash[:alert] = "No se reintentó: la orden ya no está con error. Puede que ya haya un despacho en curso o que ya fuera entregada."
+      flash[:alert] = "No se reintentó: la orden cambió desde que abriste la página. Puede que ya se haya reintentado, " \
+                      "que haya un despacho en curso o que ya fuera entregada."
     end
     redirect_to order_path(order), status: :see_other
   end
