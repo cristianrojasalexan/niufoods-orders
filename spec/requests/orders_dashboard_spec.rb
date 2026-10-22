@@ -183,7 +183,7 @@ RSpec.describe "Orders dashboard", type: :request do
       get orders_path
 
       expect(live_indicator.sole["data-auto-refresh-interval-value"]).to eq("3000")
-      expect(live_indicator.text).to include("Hay despachos en curso")
+      expect(live_indicator.text.squish).to eq("En vivo · 3 s")
     end
 
     it "keeps refreshing every 15 s once every dispatch ended, so new orders show up" do
@@ -193,7 +193,7 @@ RSpec.describe "Orders dashboard", type: :request do
       get orders_path
 
       expect(live_indicator.sole["data-auto-refresh-interval-value"]).to eq("15000")
-      expect(live_indicator.text).to include("Sin despachos en curso")
+      expect(live_indicator.text.squish).to eq("Actualiza cada 15 s")
     end
   end
 
@@ -227,7 +227,7 @@ RSpec.describe "Orders dashboard", type: :request do
 
       get orders_path
 
-      expect(response.body).to include("Simulación activa:", "Niu Foods Las Condes (Caída)", "Cambiar en Tiendas")
+      expect(response.body).to include("Modo simulación", "Niu Foods Las Condes: Caída", "Cambiar en Tiendas")
     end
 
     it "shows the figures of today" do

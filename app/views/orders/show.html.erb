@@ -6,19 +6,12 @@
   <div class="flex flex-wrap items-center gap-3">
     <h1 class="font-mono text-2xl font-semibold tracking-tight"><%= @order.number %></h1>
     <%= dispatch_status_badge(@order) %>
+    <%# Only while the dispatch can still change; a finished order stays as it is %>
+    <%= render "shared/live_badge", live: true if @live %>
   </div>
   <%= link_to "Actualizar", order_path(@order), class: "rounded-md bg-white px-3 py-2 text-sm font-medium shadow-sm ring-1 ring-inset ring-slate-300 hover:bg-slate-50" %>
 </div>
 
-<% if @live %>
-  <p data-controller="auto-refresh" class="mt-3 flex items-center gap-2 text-xs text-slate-500">
-    <span class="relative flex h-2 w-2">
-      <span class="absolute inline-flex h-full w-full rounded-full bg-sky-400 opacity-75 motion-safe:animate-ping"></span>
-      <span class="relative inline-flex h-2 w-2 rounded-full bg-sky-500"></span>
-    </span>
-    Despacho en curso: esta página se actualiza sola.
-  </p>
-<% end %>
 
 <dl class="mt-6 grid grid-cols-2 gap-3 sm:grid-cols-4">
   <% [ [ "Tienda", @order.restaurant.name ], [ "Tipo", order_type_label(@order) ],

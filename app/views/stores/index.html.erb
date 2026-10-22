@@ -2,7 +2,10 @@
 
 <div class="flex flex-wrap items-end justify-between gap-4">
   <div>
-    <h1 class="text-2xl font-semibold tracking-tight">Tiendas simuladas</h1>
+    <div class="flex flex-wrap items-center gap-3">
+      <h1 class="text-2xl font-semibold tracking-tight">Tiendas simuladas</h1>
+      <%= render "shared/live_badge", live: @live %>
+    </div>
     <p class="mt-1 max-w-3xl text-sm text-slate-500">
       Cada restaurante recibe sus órdenes en una tienda simulada dentro de esta misma app. Cambia cómo responde una tienda
       para ver los reintentos y los errores de despacho; en producción, cada restaurante apuntaría a su sistema real.
@@ -11,16 +14,6 @@
   <%= link_to "Actualizar", stores_path, class: "rounded-md bg-white px-3 py-2 text-sm font-medium shadow-sm ring-1 ring-inset ring-slate-300 hover:bg-slate-50 focus-visible:outline focus-visible:outline-2 focus-visible:outline-rose-500" %>
 </div>
 
-<p data-controller="auto-refresh" data-auto-refresh-interval-value="<%= @live ? 3000 : 15000 %>"
-   class="mt-4 flex items-center gap-2 text-xs text-slate-500">
-  <span class="relative flex h-2 w-2">
-    <% if @live %>
-      <span class="absolute inline-flex h-full w-full rounded-full bg-sky-400 opacity-75 motion-safe:animate-ping"></span>
-    <% end %>
-    <span class="relative inline-flex h-2 w-2 rounded-full <%= @live ? "bg-sky-500" : "bg-slate-300" %>"></span>
-  </span>
-  <%= @live ? "Hay despachos en curso: esta página se actualiza cada 3 s." : "Esta página se actualiza cada 15 s." %>
-</p>
 
 <div class="mt-6 grid gap-6 lg:grid-cols-3">
   <% @restaurants.each do |restaurant| %>

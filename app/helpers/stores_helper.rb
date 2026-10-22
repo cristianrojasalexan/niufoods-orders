@@ -12,6 +12,15 @@ module StoresHelper
     "down" => "bg-rose-50 text-rose-800 ring-rose-600/20"
   }.freeze
 
+  # Simulated stores that do not accept every order, with their mode, for
+  # the notice shown on every page.
+  def degraded_simulated_stores
+    @degraded_simulated_stores ||= Restaurant.order(:id).filter_map do |restaurant|
+      mode = StoreSimulator::Mode.current(restaurant.code)
+      [ restaurant, mode ] unless mode == "ok"
+    end
+  end
+
   # Modes set through STORE_MODES that the panel does not offer, such as
   # flaky:3, are shown as they are.
   def store_mode_label(mode)

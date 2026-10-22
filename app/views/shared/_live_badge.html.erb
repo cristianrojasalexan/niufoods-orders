@@ -1,0 +1,13 @@
+<%# Refreshes the page by itself: every 3 s while dispatches are moving, every 15 s otherwise.
+    The interval is read again after every refresh, so the badge and its pace follow the data. %>
+<span data-controller="auto-refresh" data-auto-refresh-interval-value="<%= live ? 3000 : 15000 %>"
+      title="<%= live ? "Hay despachos en curso: la página se actualiza cada 3 s" : "Sin despachos en curso: la página se actualiza cada 15 s" %>"
+      class="inline-flex items-center gap-1.5 rounded-full px-2.5 py-0.5 text-xs font-medium ring-1 ring-inset <%= live ? "bg-sky-50 text-sky-800 ring-sky-600/20" : "bg-slate-50 text-slate-500 ring-slate-300" %>">
+  <span class="relative flex h-2 w-2" aria-hidden="true">
+    <% if live %>
+      <span class="absolute inline-flex h-full w-full rounded-full bg-sky-400 opacity-75 motion-safe:animate-ping"></span>
+    <% end %>
+    <span class="relative inline-flex h-2 w-2 rounded-full <%= live ? "bg-sky-500" : "bg-slate-400" %>"></span>
+  </span>
+  <%= live ? "En vivo · 3 s" : "Actualiza cada 15 s" %>
+</span>

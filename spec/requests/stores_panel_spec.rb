@@ -37,6 +37,23 @@ RSpec.describe "Simulated stores panel", type: :request do
       expect(buttons.first["aria-pressed"]).to eq("true")
     end
 
+    it "shows the simulation notice on every page, without a link to itself here" do
+      StoreSimulator::Mode.change!("NUNO", "reject")
+      order = create(:order, restaurant: las_condes)
+
+      [ orders_path, order_path(order), stores_path ].each do |path|
+        get path
+        expect(response.body).to include("Modo simulación", "Niu Foods Ñuñoa: Rechaza")
+      end
+      expect(response.body).not_to include("Cambiar en Tiendas")
+    end
+
+    it "shows no simulation notice while every store accepts every order" do
+      get stores_path
+
+      expect(response.body).not_to include("Modo simulación")
+    end
+
     it "is linked from the header" do
       get orders_path
 

@@ -15,7 +15,6 @@ class OrdersController < ApplicationController
     # many orders that status filter would show.
     orders = filtered_orders.order(created_at: :desc, id: :desc)
     @status_counts = orders.unscope(:order).group(:dispatch_status).count
-    @live = ACTIVE_DISPATCH_STATUSES.any? { |status| @status_counts[status].to_i.positive? }
 
     orders = orders.where(dispatch_status: @filters[:status]) if @filters[:status]
     @pagy, @orders = pagy(:offset, orders.includes(:restaurant))
@@ -23,7 +22,7 @@ class OrdersController < ApplicationController
     # What needs attention, whatever the filters.
     @summary = Orders::DailySummary.call
     @failed_count = Order.dispatch_failed.count
-    @degraded_stores = @restaurants.reject { |restaurant| StoreSimulator::Mode.current(restaurant.code) == "ok" }
+    @live = Order.where(dispatch_status: ACTIVE_DISPATCH_STATUSES).exists?
   end
 
   def show

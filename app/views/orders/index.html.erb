@@ -2,11 +2,24 @@
 
 <div class="flex flex-wrap items-end justify-between gap-4">
   <div>
-    <h1 class="text-2xl font-semibold tracking-tight">Órdenes</h1>
+    <div class="flex flex-wrap items-center gap-3">
+      <h1 class="text-2xl font-semibold tracking-tight">Órdenes</h1>
+      <%= render "shared/live_badge", live: @live %>
+    </div>
     <p class="mt-1 text-sm text-slate-500">Órdenes recibidas por la API y su despacho a cada tienda. Horas de Santiago.</p>
   </div>
   <%= link_to "Actualizar", request.fullpath, class: "rounded-md bg-white px-3 py-2 text-sm font-medium shadow-sm ring-1 ring-inset ring-slate-300 hover:bg-slate-50" %>
 </div>
+
+<%# What needs someone's attention comes first, whatever the filters. Outside the frame:
+    the live refresh updates the whole page. %>
+<% if @failed_count.positive? && @filters[:status] != "failed" %>
+  <div role="alert" class="mt-4 flex flex-wrap items-center justify-between gap-2 rounded-lg border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-900">
+    <span><strong><%= pluralize(@failed_count, "orden", plural: "órdenes") %> con error</strong> no <%= @failed_count == 1 ? "llegó" : "llegaron" %> a su tienda y <%= @failed_count == 1 ? "requiere" : "requieren" %> atención.</span>
+    <%= link_to "Ver órdenes con error →", orders_path(status: "failed"),
+                class: "font-medium underline hover:text-rose-700 focus-visible:outline focus-visible:outline-2 focus-visible:outline-rose-500" %>
+  </div>
+<% end %>
 
 <%# Outside the frame, so typing in the search keeps the focus while the results update %>
 <%= form_with url: orders_path, method: :get, html: { role: "search" },
@@ -41,37 +54,6 @@
 <% end %>
 
 <%= turbo_frame_tag "orders", data: { turbo_action: "advance" } do %>
-  <%# Always refreshing, faster while dispatches are moving, so new orders show up too %>
-  <p data-controller="auto-refresh" data-auto-refresh-interval-value="<%= @live ? 3000 : 15000 %>"
-     class="mt-4 flex items-center gap-2 text-xs text-slate-500">
-    <span class="relative flex h-2 w-2">
-      <% if @live %>
-        <span class="absolute inline-flex h-full w-full rounded-full bg-sky-400 opacity-75 motion-safe:animate-ping"></span>
-      <% end %>
-      <span class="relative inline-flex h-2 w-2 rounded-full <%= @live ? "bg-sky-500" : "bg-slate-300" %>"></span>
-    </span>
-    <%= @live ? "Hay despachos en curso: la lista se actualiza cada 3 s." : "Sin despachos en curso: la lista se actualiza cada 15 s." %>
-  </p>
-
-  <%# What needs someone's attention, whatever the filters %>
-  <% if @failed_count.positive? && @filters[:status] != "failed" %>
-    <div role="alert" class="mt-4 flex flex-wrap items-center justify-between gap-2 rounded-lg border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-900">
-      <span><strong><%= pluralize(@failed_count, "orden", plural: "órdenes") %> con error</strong> no <%= @failed_count == 1 ? "llegó" : "llegaron" %> a su tienda y <%= @failed_count == 1 ? "requiere" : "requieren" %> atención.</span>
-      <%= link_to "Ver órdenes con error →", orders_path(status: "failed"), data: { turbo_frame: "_top" },
-                  class: "font-medium underline hover:text-rose-700 focus-visible:outline focus-visible:outline-2 focus-visible:outline-rose-500" %>
-    </div>
-  <% end %>
-  <% if @degraded_stores.any? %>
-    <div class="mt-4 flex flex-wrap items-center justify-between gap-2 rounded-lg border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-900">
-      <span>
-        Simulación activa:
-        <%= safe_join(@degraded_stores.map { |restaurant| "#{restaurant.name} (#{store_mode_label(StoreSimulator::Mode.current(restaurant.code))})" }, ", ") %>
-        no <%= @degraded_stores.one? ? "acepta" : "aceptan" %> todas las órdenes.
-      </span>
-      <%= link_to "Cambiar en Tiendas →", stores_path, data: { turbo_frame: "_top" },
-                  class: "font-medium underline hover:text-amber-700 focus-visible:outline focus-visible:outline-2 focus-visible:outline-rose-500" %>
-    </div>
-  <% end %>
 
   <%# Today, in the time zone of the restaurants %>
   <dl class="mt-4 grid grid-cols-2 gap-3 sm:grid-cols-4" aria-label="Resumen de hoy">
