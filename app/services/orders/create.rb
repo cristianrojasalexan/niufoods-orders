@@ -79,29 +79,15 @@ module Orders
     # the race for the key.
     def save(order, fingerprint)
       Order.transaction(requires_new: true) { order.save! }
-      enqueue_dispatch(order)
+      # After the commit, so a Redis failure cannot turn a created order
+      # into an error (see DispatchOrderJob.enqueue_after_commit).
+      DispatchOrderJob.enqueue_after_commit(order)
       Result.new(status: :created, order: order, errors: [])
     rescue ActiveRecord::RecordNotUnique => e
       raise unless idempotency_key && (winner = previous_order)
 
       Rails.logger.info("Idempotency-Key #{idempotency_key} was taken by a concurrent request (#{e.class})")
       replay_or_conflict(winner, fingerprint)
-    end
-
-    # Enqueued only once the order is committed, so the worker never looks for
-    # an order that does not exist yet, even if this runs inside a larger
-    # transaction.
-    #
-    # The order is already saved when the job is pushed, so a Redis failure
-    # must not turn a created order into an error: it stays pending and due,
-    # and the dispatch recovery enqueues it once Redis is back.
-    def enqueue_dispatch(order)
-      ActiveRecord.after_all_transactions_commit do
-        DispatchOrderJob.perform_async(order.id)
-      rescue RedisClient::Error => e
-        Rails.logger.warn("Order #{order.number} saved but its dispatch was not enqueued (#{e.class}: #{e.message}); " \
-                          "it stays pending for the dispatch recovery")
-      end
     end
 
     # Loads what the serializer needs, as a replay returns the stored order.

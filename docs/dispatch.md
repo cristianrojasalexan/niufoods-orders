@@ -75,6 +75,8 @@ El job se encola **después del commit** de la orden, para que el worker nunca b
 
 Esas órdenes las retoma la [recuperación](#recuperación) cuando los servicios vuelven a estar disponibles.
 
+Los tres lugares que encolan un despacho (la creación de la orden, los reintentos programados y el [reintento manual](#reintento-manual)) usan el mismo método, `DispatchOrderJob.enqueue_after_commit`. Así comparten el encolado después del commit y el manejo de Redis caído.
+
 ## Clasificación de la respuesta
 
 | Respuesta de la tienda | Resultado |

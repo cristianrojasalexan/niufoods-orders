@@ -38,23 +38,12 @@ module Orders
     def call
       sql = Order.sanitize_sql_array([ REOPEN_SQL, { id: order.id, cycle: cycle } ])
       new_cycle = Order.connection.exec_query(sql, "Order Redispatch").first&.fetch("dispatch_cycle")
-      enqueue_dispatch if new_cycle
+      DispatchOrderJob.enqueue_after_commit(order) if new_cycle
       new_cycle
     end
 
     private
 
     attr_reader :order, :cycle
-
-    # The order is already pending and due, so if Redis is not available the
-    # dispatch recovery enqueues it later.
-    def enqueue_dispatch
-      ActiveRecord.after_all_transactions_commit do
-        DispatchOrderJob.perform_async(order.id)
-      rescue RedisClient::Error => e
-        Rails.logger.warn("Redispatch of order #{order.number} not enqueued (#{e.class}: #{e.message}); " \
-                          "it stays pending for the dispatch recovery")
-      end
-    end
   end
 end

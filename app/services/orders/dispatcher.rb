@@ -102,7 +102,7 @@ module Orders
                        .update_all(result_columns(claim, delivery, retry_in)) == 1
         outcome = applied ? delivery.outcome : :stale
         record_attempt(order, claim, delivery, outcome)
-        schedule_retry(order, retry_in) if applied && retry_in
+        DispatchOrderJob.enqueue_after_commit(order, wait: retry_in) if applied && retry_in
         outcome
       end
     end
@@ -133,17 +133,6 @@ module Orders
       return delivery.error_message unless delivery.outcome == :transient
 
       "#{delivery.error_message} (gave up after #{claim.attempt_number} attempts)"
-    end
-
-    # Scheduled once the new state is committed. If Redis is not available the
-    # order is still pending and due later, so the dispatch recovery retries it.
-    def schedule_retry(order, retry_in)
-      ActiveRecord.after_all_transactions_commit do
-        DispatchOrderJob.perform_in(retry_in, order.id)
-      rescue RedisClient::Error => e
-        Rails.logger.warn("Retry of order #{order.number} not scheduled (#{e.class}: #{e.message}); " \
-                          "it stays pending for the dispatch recovery")
-      end
     end
 
     def record_attempt(order, claim, delivery, outcome)
