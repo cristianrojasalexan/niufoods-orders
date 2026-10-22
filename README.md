@@ -10,7 +10,7 @@ API central para recibir, validar, persistir y despachar órdenes a los restaura
 - [API de órdenes: contrato, validaciones y errores](docs/api.md)
 - [Despacho a tienda: claim, lease, reintentos y recuperación](docs/dispatch.md)
 - [Tiendas simuladas: recepción, deduplicación y modos](docs/simulated_stores.md)
-- [Simulación de órdenes: script, casos válidos e inválidos](docs/simulation.md)
+- [Simulación de órdenes y escenarios de demo del despacho](docs/simulation.md)
 
 ## Stack
 
