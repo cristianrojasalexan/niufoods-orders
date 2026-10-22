@@ -52,7 +52,7 @@ La misma sentencia devuelve (`RETURNING`) el número de intento que le tocó a e
 
 Si no cambia ninguna fila, el job termina sin hacer nada. Puede ser porque la orden todavía no corresponde, porque otro worker la tiene, porque ya terminó o porque se agotaron sus intentos. Como es una sola sentencia, dos workers nunca toman la misma orden al mismo tiempo.
 
-**Lease:** el worker tiene la orden hasta `dispatch_lease_expires_at`. Si muere a mitad del envío, cuando la lease vence otro worker puede retomarla con un token nuevo. Eso también cuenta como intento. La lease (60 s) dura más que todo el request HTTP (3 s para conectar y 10 s para la respuesta); si no fuera así, la app no arranca.
+**Lease:** el worker tiene la orden hasta `dispatch_lease_expires_at`. Si muere a mitad del envío, cuando la lease vence otro worker puede retomarla con un token nuevo. Eso también cuenta como intento. La lease (60 s por defecto) debe durar al menos el doble del plazo total de la entrega (23 s), para cubrir también la carga de la orden y la escritura del resultado, que puede esperar el bloqueo de la orden; si no, la app no arranca.
 
 ### 2. Entrega
 
@@ -62,6 +62,8 @@ Si no cambia ninguna fila, el job termina sin hacer nada. Puede ser porque la or
 Content-Type: application/json
 Idempotency-Key: LCON-000042
 ```
+
+**Plazo total de 23 s.** Los timeouts HTTP (3 s para conectar, 10 s para enviar el cuerpo y 10 s para cada lectura) limitan cada paso, no la solicitud completa: una tienda que envía la respuesta de a pocos bytes podría retener al worker indefinidamente y superar la lease. Por eso la entrega completa tiene además un plazo igual a la suma de los tres (`delivery_deadline_seconds`, definido una sola vez en `config/initializers/dispatch.rb`). Si vence, el intento es `transient` (`deadline exceeded`) y se reintenta como cualquier timeout. El plazo usa `Timeout.timeout` sin una clase de error propia, para que ningún `rescue` dentro de Net::HTTP o Faraday pueda capturar la interrupción. El plazo cubre solo la llamada HTTP; el JSON de la orden se arma antes. Es un trade-off: una respuesta legítima que, sin pasarse en ningún paso, tarde más de 23 s en total también se corta y consume un intento. Si la tienda sí había recibido la orden, el reenvío llega con la misma `Idempotency-Key` y la tienda no la registra dos veces.
 
 El `Idempotency-Key` es el número de la orden. La entrega es **al menos una vez**: si un worker pierde la lease pero su request igual llegó a la tienda, la orden puede llegar dos veces, y la tienda la recibe solo la primera (ver [Tiendas simuladas](simulated_stores.md#deduplicación-atómica)).
 
@@ -167,12 +169,14 @@ Cada intento queda en `dispatch_attempts`, con ciclo, número de intento, token,
 | `permanent` | Falla definitiva. |
 | `stale` | El worker perdió la lease antes de terminar; su resultado se descartó. |
 
+El intento se registra **al terminar**, junto con su resultado. Si un worker muere a mitad de un intento, ese intento ya se contó (el claim sumó 1 a `dispatch_attempts_count`), pero no deja una fila en `dispatch_attempts`. La orden queda `dispatching` con la lease vencida. Si al ciclo le quedan intentos, la recuperación o un job posterior la retoma; si era el último, la recuperación la marca `failed` (`lease expired during the last attempt`). En ambos casos, el detalle de la orden puede mostrar menos filas que los intentos del ciclo.
+
 ## Configuración
 
 | Variable | Default | Uso |
 |---|---|---|
 | `MAX_ATTEMPTS_PER_CYCLE` | `5` | Intentos totales de un ciclo de despacho. |
-| `DISPATCH_LEASE_SECONDS` | `60` | Cuánto tiempo un worker tiene tomada una orden. Debe ser mayor que 13 s. |
+| `DISPATCH_LEASE_SECONDS` | `60` | Cuánto tiempo un worker tiene tomada una orden. Debe ser al menos el doble del plazo de entrega (46 s). |
 | `DISPATCH_RETRY_BASE_SECONDS` | `10` (`2` en `bin/dev` y Docker) | Espera antes del primer reintento; se duplica en cada intento. |
 | `DISPATCH_RETRY_MAX_SECONDS` | `300` | Tope de cualquier espera, incluida la que pida `Retry-After`. |
 | `DISPATCH_RECOVERY_INTERVAL_SECONDS` | `60` | Cada cuánto corre la recuperación. |

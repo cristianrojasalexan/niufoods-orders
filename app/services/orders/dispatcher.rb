@@ -72,20 +72,39 @@ module Orders
       Claim.new(token: token, cycle: row["dispatch_cycle"], attempt_number: row["dispatch_attempts_count"]) if row
     end
 
+    # The HTTP timeouts limit each step (connecting, writing and every read)
+    # but not the whole request: a store that keeps sending a few bytes could
+    # hold the worker past its lease. The deadline bounds the request to the
+    # sum of the steps, and the lease is at least twice as long
+    # (config/initializers/dispatch.rb). The body is built before, so the
+    # deadline never interrupts a database query of the serializer.
+    #
+    # Timeout.timeout gets no error class on purpose: it then interrupts the
+    # block with an internal exception that no rescue inside Net::HTTP or
+    # Faraday can swallow, and turns it into Timeout::Error only here.
     def deliver(order)
+      body = OrderSerializer.new(order).as_json.to_json
       started_at = monotonic_now
-      response = http.post(order.restaurant.dispatch_url) do |request|
-        request.headers["Content-Type"] = "application/json"
-        request.headers["Idempotency-Key"] = order.number
-        request.body = OrderSerializer.new(order).as_json.to_json
+      response = Timeout.timeout(settings.delivery_deadline_seconds) do
+        http.post(order.restaurant.dispatch_url) do |request|
+          request.headers["Content-Type"] = "application/json"
+          request.headers["Idempotency-Key"] = order.number
+          request.body = body
+        end
       end
       outcome = classify(response.status)
       Delivery.new(outcome: outcome, http_status: response.status, duration_ms: elapsed_ms(started_at),
                    error_message: ("store answered #{response.status}" unless outcome == :success),
                    retry_after: response.headers["Retry-After"])
     rescue Faraday::TimeoutError, Faraday::ConnectionFailed, Faraday::SSLError => e
+      transient_failure(started_at, "#{e.class.name.demodulize}: #{e.message}")
+    rescue Timeout::Error
+      transient_failure(started_at, "deadline exceeded: no complete answer within #{settings.delivery_deadline_seconds}s")
+    end
+
+    def transient_failure(started_at, message)
       Delivery.new(outcome: :transient, http_status: nil, duration_ms: elapsed_ms(started_at),
-                   error_message: "#{e.class.name.demodulize}: #{e.message}".truncate(255), retry_after: nil)
+                   error_message: message.truncate(255), retry_after: nil)
     end
 
     def classify(status)
@@ -153,7 +172,8 @@ module Orders
 
     def http
       @http ||= Faraday.new(request: { open_timeout: settings.open_timeout_seconds,
-                                       timeout: settings.read_timeout_seconds })
+                                       write_timeout: settings.write_timeout_seconds,
+                                       read_timeout: settings.read_timeout_seconds })
     end
 
     def monotonic_now

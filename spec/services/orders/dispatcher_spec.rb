@@ -68,6 +68,34 @@ RSpec.describe Orders::Dispatcher do
       expect(order.dispatch_attempts.sole).to have_attributes(http_status: nil, error_message: /TimeoutError/)
     end
 
+    # Each read finishes before the read timeout, so only a deadline for the
+    # whole request stops a store that keeps the answer trickling in.
+    it "gives up as transient when the whole delivery outlasts the timeouts added" do
+      settings = Rails.configuration.x.dispatch.dup.tap { |s| s.delivery_deadline_seconds = 0.1 }
+      stub_request(:post, restaurant.dispatch_url).to_return do
+        sleep 0.5
+        { status: 201 }
+      end
+
+      expect(described_class.new(order.id, settings: settings).call).to eq(:transient)
+      expect(order.dispatch_attempts.sole).to have_attributes(
+        http_status: nil, error_message: "deadline exceeded: no complete answer within 0.1s",
+        duration_ms: be < 400
+      )
+      expect(order.reload.dispatch_status).to eq("pending")
+    end
+
+    it "does not count building the order payload against the delivery deadline" do
+      settings = Rails.configuration.x.dispatch.dup.tap { |s| s.delivery_deadline_seconds = 0.1 }
+      allow_any_instance_of(OrderSerializer).to receive(:as_json).and_wrap_original do |original, *args|
+        sleep 0.3
+        original.call(*args)
+      end
+      stub_store(status: 201)
+
+      expect(described_class.new(order.id, settings: settings).call).to eq(:success)
+    end
+
     it "treats a connection that cannot be opened in time as transient" do
       stub_request(:post, restaurant.dispatch_url).to_timeout
 

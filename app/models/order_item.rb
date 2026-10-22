@@ -16,6 +16,9 @@ class OrderItem < ApplicationRecord
   before_validation :calculate_subtotal
   before_save :lock_order
   before_destroy :lock_order, unless: :destroyed_by_association
+  # Removed by its order's save, the order checks its final item count
+  # itself, once the replacements are written too.
+  before_destroy :keep_one_item_in_order, unless: -> { destroyed_by_association || order&.saving? }
   after_save :refresh_order_total
   after_destroy :refresh_order_total, unless: :destroyed_by_association
 
@@ -47,6 +50,16 @@ class OrderItem < ApplicationRecord
 
     Order.where(id: order_id).lock.pluck(:id).presence ||
       raise(ActiveRecord::RecordNotFound.new("Order #{order_id} no longer exists", "Order", "id", order_id))
+  end
+
+  # An order without items would be dispatched with nothing to prepare.
+  # Checked with the order locked, so two items removed at once cannot both
+  # see the other one still there. Destroying the whole order is allowed.
+  def keep_one_item_in_order
+    return if OrderItem.where(order_id: order_id).where.not(id: id).exists?
+
+    errors.add(:base, "an order must keep at least one item; destroy the order instead")
+    throw :abort
   end
 
   # Keeps the order total equal to the sum of its subtotals even when an item

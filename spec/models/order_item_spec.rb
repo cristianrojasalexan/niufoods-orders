@@ -100,6 +100,79 @@ RSpec.describe OrderItem, type: :model do
     end
   end
 
+  describe "removal" do
+    let!(:order) { create(:order, items_count: 2) }
+
+    it "can remove an item while another one remains" do
+      order.order_items.first.destroy!
+
+      expect(order.order_items.reload.size).to eq(1)
+    end
+
+    it "cannot remove the last item of an order" do
+      first, last = order.order_items.to_a
+      first.destroy!
+
+      expect { last.destroy! }.to raise_error(ActiveRecord::RecordNotDestroyed)
+      expect(last.errors[:base]).to include(/at least one item/)
+      expect(order.reload.total_amount).to eq(last.subtotal)
+    end
+
+    it "cannot remove the last item by marking it and destroying it outside its order's save" do
+      first, last = order.order_items.to_a
+      first.destroy!
+
+      last.mark_for_destruction
+      expect { last.destroy! }.to raise_error(ActiveRecord::RecordNotDestroyed)
+      expect(OrderItem.where(order_id: order.id).pluck(:id)).to eq([ last.id ])
+    end
+
+    it "can replace the last item in the same save of its order" do
+      order.order_items.first.destroy!
+      last = order.order_items.reload.sole
+      replacement = create(:product, price: 2490)
+
+      last.mark_for_destruction
+      order.order_items.build(product: replacement, quantity: 2)
+      order.save!
+
+      expect(order.reload.order_items.map(&:product)).to eq([ replacement ])
+      expect(order.total_amount).to eq(4980)
+    end
+
+    # The order in memory still holds an item another process already
+    # removed, so its own validation passes; the count in the database
+    # after the save is what stops it.
+    it "cannot lose its last item through a save with stale items" do
+      first, last = order.order_items.to_a
+      OrderItem.find(first.id).destroy!
+
+      last.mark_for_destruction
+      expect(order.valid?).to be(true)
+      expect { order.save! }.to raise_error(ActiveRecord::RecordNotSaved, /must keep at least one item/)
+      expect(OrderItem.where(order_id: order.id).pluck(:id)).to eq([ last.id ])
+    end
+
+    # save (without !) would turn RecordInvalid into a Rollback that the
+    # outer transaction swallows, committing the item already removed.
+    it "cannot lose its last item through a save inside another transaction" do
+      first, last = order.order_items.to_a
+      OrderItem.find(first.id).destroy!
+
+      expect do
+        Order.transaction(requires_new: true) do
+          last.mark_for_destruction
+          order.save
+        end
+      end.to raise_error(ActiveRecord::RecordNotSaved)
+      expect(OrderItem.where(order_id: order.id).pluck(:id)).to eq([ last.id ])
+    end
+
+    it "still lets the whole order be destroyed" do
+      expect { order.destroy! }.to change(OrderItem, :count).by(-2)
+    end
+  end
+
   describe "order and product" do
     let(:item) { create(:order_item) }
 
