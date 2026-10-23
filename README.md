@@ -4,6 +4,8 @@ API central en Ruby on Rails que recibe las órdenes de los canales digitales de
 
 **El flujo de punta a punta:** una orden válida entra por `POST /api/v1/orders`, queda registrada con su total calculado en el servidor, se asocia a su restaurante, se despacha a la tienda de ese restaurante y aparece en el dashboard con su estado de despacho.
 
+En el historial de commits, cada `fix:` que sigue a un `feat:` corrige un hallazgo de revisión de código sobre ese commit; su mensaje explica el problema y la corrección.
+
 ![Dashboard de órdenes](docs/images/dashboard.png)
 
 ## Contenido
@@ -17,7 +19,6 @@ API central en Ruby on Rails que recibe las órdenes de los canales digitales de
 - [Decisiones técnicas](#decisiones-técnicas)
 - [Tests, lint y CI](#tests-lint-y-ci)
 - [Estructura del proyecto](#estructura-del-proyecto)
-- [Historial de commits](#historial-de-commits)
 - [Limitaciones y trabajo futuro](#limitaciones-y-trabajo-futuro)
 
 **Documentación detallada** en [`docs/`](docs):
@@ -371,33 +372,8 @@ script/                        simulate_orders.rb y demo_scenarios.rb
 spec/                          modelos, servicios, requests, jobs, integración y scripts
 ```
 
-## Historial de commits
-
-El historial muestra cómo se construyó la solución, con commits pequeños en [Conventional Commits](https://www.conventionalcommits.org/) y los tests en verde en cada uno. El orden fue:
-1. base del proyecto e infraestructura;
-2. diseño documentado;
-3. catálogo;
-4. órdenes;
-5. API e idempotencia;
-6. tienda simulada;
-7. despacho con reintentos y recuperación;
-8. scripts;
-9. dashboard;
-10. CI y documentación;
-11. mejoras de la interfaz: actualización en vivo, filtros y búsqueda, línea de tiempo del despacho, panel de tiendas y avisos.
-
-Cada `fix:` que sigue a un `feat:` corrige un hallazgo de revisión de código sobre ese commit. Su mensaje explica el problema y la corrección.
-
-```bash
-git log --reverse --oneline
-```
-
 ## Limitaciones y trabajo futuro
 
 - **Autenticación de la API y de las tiendas.** Hoy la API no autentica a los canales. Lo siguiente sería API keys por canal, `Idempotency-Key` con alcance por cliente, y firma HMAC del payload que se envía a cada tienda.
 - **Transactional outbox.** Entre el commit de una orden y el encolado de su job hay una ventana en la que una falla de Redis deja la orden sin job hasta la siguiente ronda de recuperación. Una tabla de eventos escrita en la misma transacción cerraría esa ventana.
-- **Especificación OpenAPI** generada desde los request specs (por ejemplo, con rswag).
-- **Más volumen en el dashboard:** medir con `EXPLAIN ANALYZE` y datos representativos si conviene un índice compuesto para el filtro por estado ordenado por fecha, y paginar por cursor en vez de offset.
-- **Observabilidad:** métricas de despacho (latencia, tasa de error por tienda) y alertas sobre órdenes `failed`.
-- **Recuperación dentro de Sidekiq** con `sidekiq-cron`, como alternativa al proceso `bin/dispatch_recovery`.
-- **Tests automatizados de la interfaz en el navegador.** Los request specs cubren lo que renderiza el servidor, pero no el JavaScript: el refresco en vivo, la protección de la búsqueda durante un refresco y el resaltado de filas se verificaron con un navegador real (Puppeteer). El siguiente paso serían system tests con Capybara y un navegador headless en el CI.
+- **Tests automatizados de la interfaz en el navegador.** Los request specs cubren lo que renderiza el servidor, pero no el JavaScript: el refresco en vivo, la protección de la búsqueda durante un refresco y el resaltado de filas se verificaron con un navegador real. El siguiente paso serían system tests con Capybara y un navegador headless en el CI.
