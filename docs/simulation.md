@@ -5,7 +5,7 @@
 ```bash
 ruby script/simulate_orders.rb                                   # 20 órdenes, ~20 % inválidas
 ruby script/simulate_orders.rb --count 50 --invalid-ratio 0.3   # más órdenes y más inválidas
-ruby script/simulate_orders.rb --seed 42                         # repite exactamente las mismas órdenes
+ruby script/simulate_orders.rb --seed 42                         # repite el mismo contenido de órdenes
 ruby script/simulate_orders.rb --url http://localhost:3000       # otra URL (o SIMULATION_URL)
 ```
 
@@ -14,7 +14,7 @@ ruby script/simulate_orders.rb --url http://localhost:3000       # otra URL (o S
 | `--url` | `http://localhost:3000` | URL base de la API. También se puede definir con `SIMULATION_URL`. |
 | `--count` | `20` | Cantidad de órdenes a enviar. |
 | `--invalid-ratio` | `0.2` | Proporción de órdenes inválidas, entre 0 y 1. |
-| `--seed` | aleatoria | Semilla. La corrida la muestra al inicio, así que cualquier resultado se puede repetir. |
+| `--seed` | aleatoria | Semilla del generador aleatorio. Con la misma semilla se generan las mismas órdenes (restaurantes, tipos, productos, cantidades y cuáles son inválidas). La corrida la muestra al inicio, así que cualquier resultado se puede repetir. Cada corrida igual crea órdenes nuevas: el número de orden lo asigna la base, y la `Idempotency-Key` es aleatoria a propósito, para que una corrida repetida no se responda como reintento de la anterior. |
 
 ## Qué hace
 

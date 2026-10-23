@@ -10,11 +10,13 @@ http://localhost:3000/simulated_stores/NUNO/orders
 
 ## Aislamiento
 
-La tienda simulada se comporta como un sistema externo:
+La tienda simulada (los endpoints `/simulated_stores/...`) se comporta como un sistema externo:
 
 - vive en su propio namespace (`StoreSimulator::`) y en sus propias tablas (`simulated_store_modes` y `simulated_store_requests`);
 - **no lee ni escribe ninguna tabla de órdenes**: solo conoce lo que le llega por HTTP;
 - responde con su propio JSON, distinto del formato de errores de la API de órdenes.
+
+El [panel Tiendas](#panel-tiendas) no es parte del simulador sino del dashboard: lee los restaurantes y las órdenes, y usa `StoreSimulator` para leer y cambiar los modos y las recepciones.
 
 En producción, cada `dispatch_url` apuntaría al sistema real de la tienda y este módulo se dejaría de usar. La base de las URLs se configura con `STORE_BASE_URL` (ver `.env.example`) y se aplica al correr `bin/rails db:seed`.
 
@@ -141,7 +143,7 @@ La página **Tiendas** (`/stores`, en el menú de la app) permite hacer toda la 
 
 **Aviso en toda la app:** mientras alguna tienda esté en un modo que no acepta todas las órdenes, una franja "Modo simulación" bajo el header lo indica en todas las páginas, con un enlace al panel. Así, el detalle de una orden fallida tiene su explicación a la vista. `flaky:0` no dispara el aviso, porque no falla ningún intento.
 
-El panel se actualiza solo (cada 3 s mientras hay despachos en curso y cada 15 s si no) y lee los modos y las recepciones en un número fijo de consultas, sin importar cuántas tiendas haya. Como el resto del simulador, solo usa sus propias tablas.
+El panel se actualiza solo (cada 3 s mientras hay despachos en curso y cada 15 s si no) y lee los modos y las recepciones en un número fijo de consultas, sin importar cuántas tiendas haya.
 
 ## Alcance
 

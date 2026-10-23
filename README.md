@@ -4,7 +4,7 @@ API central en Ruby on Rails que recibe las órdenes de los canales digitales de
 
 **El flujo de punta a punta:** una orden válida entra por `POST /api/v1/orders`, queda registrada con su total calculado en el servidor, se asocia a su restaurante, se despacha a la tienda de ese restaurante y aparece en el dashboard con su estado de despacho.
 
-En el historial de commits, cada `fix:` que sigue a un `feat:` corrige un hallazgo de revisión de código sobre ese commit; su mensaje explica el problema y la corrección.
+**Cómo leer el historial de commits:** cada `fix:` que sigue a un `feat:` corrige un hallazgo de revisión de código sobre ese commit; su mensaje explica el problema y la corrección.
 
 ![Dashboard de órdenes](docs/images/dashboard.png)
 
@@ -79,7 +79,7 @@ flowchart LR
     worker == "POST + Idempotency-Key" ==> store["Tienda del restaurante<br/>(simulada)"]
     recovery["bin/dispatch_recovery"] -- "despachos sin job" --> pg
     recovery -. "reencola" .-> redis
-    dash["Dashboard"] -- "lee" --> pg
+    dash["Dashboard y<br/>panel Tiendas"] -- "lee las órdenes;<br/>cambia el modo de las tiendas" --> pg
 
     classDef rails fill:#fbe3e3,stroke:#cc342d,color:#5c1411
     classDef storage fill:#e3ecf7,stroke:#336791,color:#13304d
@@ -245,12 +245,12 @@ Más detalle en [docs/simulation.md](docs/simulation.md) y [docs/simulated_store
 
 - **`/`**: tabla con N° de orden, tienda, total en CLP, tipo (Retiro / Delivery), fecha y hora de creación en hora de Santiago (con "hace 3 min" debajo) y estado de despacho (Pendiente / Enviando / Enviada / Error), con la cantidad de intentos cuando hubo reintentos. Pagina de a 25 órdenes con Pagy, y toda la fila abre el detalle de la orden.
 - **Filtros combinables:** búsqueda por número de orden, tienda y tipo de pedido. Las tarjetas superiores muestran el conteo por estado dentro de esos filtros y filtran por estado. Los filtros se aplican mientras se escribe o se elige, sin perder el foco, y quedan en la URL, así que una vista filtrada se puede compartir o recargar.
-- **Actualización en vivo:** la página se refresca sola, cada 3 s mientras haya despachos pendientes o en curso y cada 15 s si no, para que aparezcan las órdenes nuevas. Una etiqueta junto al título lo indica ("En vivo · 3 s"). El refresco nunca pisa una búsqueda que se está escribiendo: espera a que se envíe y, si ya estaba en curso, actualiza todo menos el formulario. Usa el *morphing* de Turbo 8: solo cambia lo que cambió y se mantiene el scroll. Las filas que aparecen o cambian de estado se iluminan un momento. En una pestaña oculta espera a que vuelva a estar visible.
 - **Lo que requiere atención:** justo bajo el título, un aviso con las órdenes con error y un enlace a ellas. Si alguna tienda simulada no está aceptando órdenes, una franja bajo el header lo indica en todas las páginas, para que una orden con error tenga su explicación a la vista. Además, los indicadores del día: órdenes, monto, porcentaje entregado a tienda y tiempo medio de entrega.
-- **`/stores`**: panel de las tiendas simuladas, con su modo actual, botones para cambiarlo (Acepta / Inestable / Rechaza / Caída), cuántas órdenes recibió y cuántas solicitudes le llegaron, y sus últimas órdenes recibidas. Detalle en [Panel Tiendas](docs/simulated_stores.md#panel-tiendas).
-- **Accesibilidad:** los conteos se anuncian a lectores de pantalla cuando cambian, el foco del teclado es visible y las animaciones se desactivan si el sistema pide reducir el movimiento.
-- **`/orders/:id`**: productos con cantidad, precio unitario y subtotal; datos del cliente y dirección; y los intentos de despacho como una **línea de tiempo por ciclo**, con resultado, código HTTP, duración, error y el tiempo entre intentos, donde se ve crecer la espera del *backoff*. Mientras el despacho sigue en curso, muestra el próximo intento y se actualiza sola.
+- **`/orders/:id`**: productos con cantidad, precio unitario y subtotal; datos del cliente y dirección; y los intentos de despacho como una **línea de tiempo por ciclo**, con resultado, código HTTP, duración, error y el tiempo entre intentos, donde se ve crecer la espera del *backoff*. Mientras el despacho sigue en curso, muestra el próximo intento.
 - **Reintentar despacho**: el botón aparece solo en órdenes `failed`, pide confirmación y muestra "Reintentando…" mientras se envía. Abre un ciclo nuevo de intentos, y solo se aplica si la orden sigue `failed` en el mismo ciclo que mostraba la página, así que varios clics, o un clic desde una página desactualizada, abren a lo sumo un ciclo nuevo.
+- **`/stores`**: panel de las tiendas simuladas, con su modo actual, botones para cambiarlo (Acepta / Inestable / Rechaza / Caída), cuántas órdenes recibió y cuántas solicitudes le llegaron, y sus últimas órdenes recibidas. Detalle en [Panel Tiendas](docs/simulated_stores.md#panel-tiendas).
+- **Actualización en vivo:** las páginas se refrescan solas, cada 3 s mientras haya despachos pendientes o en curso y cada 15 s si no, para que aparezcan las órdenes nuevas; una etiqueta junto al título lo indica ("En vivo · 3 s"). Usa el *morphing* de Turbo 8: solo cambia lo que cambió, se mantiene el scroll y las filas que aparecen o cambian de estado se iluminan un momento. El refresco nunca pisa una búsqueda que se está escribiendo: espera a que se envíe y, si ya estaba en curso, actualiza todo menos el formulario. En una pestaña oculta, espera a que vuelva a estar visible.
+- **Accesibilidad:** los conteos se anuncian a lectores de pantalla cuando cambian, el foco del teclado es visible y las animaciones se desactivan si el sistema pide reducir el movimiento.
 
 ![Detalle de una orden con sus intentos de despacho](docs/images/order-detail.png)
 
@@ -303,16 +303,16 @@ Todas tienen un valor por defecto que funciona. Para cambiarlas, copia `.env.exa
 | `STORE_BASE_URL` | `http://localhost:3000/simulated_stores` | Base de los `dispatch_url` de los restaurantes al cargar las seeds. |
 | `STORE_MODES` | `PROV=ok,LCON=ok,NUNO=ok` | Modo inicial de cada tienda simulada. |
 | `MAX_ATTEMPTS_PER_CYCLE` | `5` | Intentos de despacho por ciclo. |
-| `DISPATCH_RETRY_BASE_SECONDS` | `10` (`2` en `bin/dev` y Docker) | Espera base del backoff exponencial. |
+| `DISPATCH_RETRY_BASE_SECONDS` | `10` (`2` en `bin/dev` y Docker) | Espera base del *backoff* exponencial. |
 | `DISPATCH_RETRY_MAX_SECONDS` | `300` | Tope de cualquier espera, incluido `Retry-After`. |
-| `DISPATCH_LEASE_SECONDS` | `60` | Cuánto tiempo un worker tiene tomada una orden. |
+| `DISPATCH_LEASE_SECONDS` | `60` | Cuánto tiempo un worker tiene tomada una orden. Debe ser al menos el doble del plazo de una entrega (46 s); si no, la app no arranca. |
 | `DISPATCH_RECOVERY_INTERVAL_SECONDS`, `DISPATCH_RECOVERY_GRACE_SECONDS` | `60`, `30` | Frecuencia y margen de la recuperación. |
 | `SIDEKIQ_WEB_USER`, `SIDEKIQ_WEB_PASSWORD` | sin valor | Fuera de desarrollo, `/sidekiq` solo se monta con Basic Auth. |
 
 ## Decisiones técnicas
 
 - **PostgreSQL decide, Sidekiq ejecuta.** El estado del despacho vive en la orden: intentos, próximo intento y qué worker la tiene tomada. El job solo lleva el `order_id`, y los reintentos automáticos de Sidekiq están desactivados (`retry: false`). Por eso un job duplicado, adelantado o perdido es inofensivo, y se puede auditar y razonar sobre el despacho mirando solo la base.
-- **Claim atómico con reserva temporal y token.** Un único `UPDATE ... RETURNING` reclama la orden si le corresponde un intento, y le da al worker una reserva temporal (*lease*, 60 s por defecto) identificada con un token. Si el worker muere, la reserva vence y otro worker puede retomar la orden. El resultado se escribe solo si el token sigue vigente: un worker que perdió la reserva no pisa el resultado del que tomó su lugar, y su intento queda registrado como `stale`. El mismo `UPDATE` verifica el límite de intentos del ciclo, así que no se supera aunque haya jobs duplicados o workers que mueran a mitad de un intento.
+- **Claim atómico con reserva temporal y token.** Un único `UPDATE ... RETURNING` reclama la orden si le corresponde un intento, y le da al worker una reserva temporal (*lease*, 60 s por defecto) identificada con un token. Si el worker muere, la reserva vence y otro worker puede retomar la orden. Cada entrega HTTP tiene además un plazo total de 23 s, para que una tienda lenta no retenga al worker más allá de su reserva. El resultado se escribe solo si el token sigue vigente: un worker que perdió la reserva no pisa el resultado del que tomó su lugar, y su intento queda registrado como `stale`. El mismo `UPDATE` verifica el límite de intentos del ciclo, así que no se supera aunque haya jobs duplicados o workers que mueran a mitad de un intento.
 - **Entrega con reintentos y recepción idempotente.** El worker reintenta los fallos transitorios hasta agotar el límite del ciclo, así que una tienda puede recibir la misma orden más de una vez; por ejemplo, si la aceptó pero su respuesta se perdió. Por eso la API envía el número de orden como `Idempotency-Key`, y la tienda lo usa para no registrar dos veces la misma orden.
 - **Errores transitorios y permanentes se tratan distinto.** 5xx, 408, 425, 429, timeouts y errores de conexión se reintentan con *backoff* exponencial, respetando `Retry-After` si la tienda pide esperar más. El resto de los 4xx marca la orden como `failed` de inmediato, porque reintentar no cambiaría la respuesta.
 - **Encolado después del commit, con recuperación.** El job se encola recién cuando la transacción se confirmó, así que el worker no busca una orden que todavía no es visible en la base. Si Redis no está disponible, la API igual responde `201` y la orden se recupera después. Se eligió así en vez de un *transactional outbox* por simplicidad (ver limitaciones).
@@ -321,7 +321,7 @@ Todas tienen un valor por defecto que funciona. Para cambiarlas, copia `.env.exa
 - **Integridad en la base, no solo en Rails.** Claves foráneas, `NOT NULL`, `CHECK` (cantidad positiva, subtotal coherente, estados válidos y sus columnas requeridas) e índices únicos protegen los datos aunque alguien escriba sin pasar por los modelos.
 - **Idempotencia con huella de la solicitud.** La misma clave con la misma solicitud canónica devuelve la orden original (`200`); con otra solicitud, `409`. Las solicitudes simultáneas las resuelve un índice único.
 - **Tienda simulada dentro de la app, pero aislada.** Un servicio aparte, por ejemplo en Sinatra, sumaría otro proceso e imagen sin aportar a la evaluación. El endpoint vive en su propio namespace, no usa los modelos de órdenes y tiene sus propias tablas. En producción bastaría con apuntar `dispatch_url` a la tienda real.
-- **Rails con Hotwire y Tailwind para el dashboard.** Cumple lo pedido sin sumar un frontend SPA aparte, y queda en el mismo deploy. La actualización en vivo usa *morphing* de Turbo con un refresco periódico solo mientras hay despachos en curso, en vez de Turbo Streams con WebSockets: para un panel interno da el mismo resultado sin sumar Action Cable.
+- **Rails con Hotwire y Tailwind para el dashboard.** Cumple lo pedido sin sumar un frontend SPA aparte, y queda en el mismo deploy. La actualización en vivo usa *morphing* de Turbo con un refresco periódico (cada 3 s con despachos en curso y cada 15 s sin ellos), en vez de Turbo Streams con WebSockets: para un panel interno da el mismo resultado sin sumar Action Cable.
 - **Fechas:** el dashboard muestra la hora de Santiago (`config.time_zone`), y la API responde en UTC ISO 8601, como se espera de un contrato entre sistemas.
 
 ## Tests, lint y CI
@@ -339,10 +339,12 @@ La suite cubre, entre otras cosas:
 - las cantidades inválidas;
 - la idempotencia, también con solicitudes concurrentes en threads;
 - el claim y la lease, incluido un worker obsoleto que no pisa el resultado;
-- la clasificación de respuestas y el límite de intentos;
+- la clasificación de respuestas, el límite de intentos y el plazo total de una entrega;
+- el total y la cantidad de ítems de una orden, también con ítems desactualizados en memoria;
 - la recuperación;
 - la tienda con recepciones concurrentes;
-- el dashboard y el reintento manual, también con clics concurrentes;
+- el dashboard, el panel de tiendas y el reintento manual, también con clics concurrentes;
+- que la cantidad de consultas de cada página no crezca con el número de tiendas;
 - los dos scripts, corriendo contra la app real.
 
 Los tests bloquean cualquier llamada HTTP real con WebMock.

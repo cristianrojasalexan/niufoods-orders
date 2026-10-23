@@ -1,6 +1,6 @@
 # Despacho de órdenes a tienda
 
-Cuando se crea una orden, la API encola un job de Sidekiq que la envía por HTTP a la tienda de su restaurante (`restaurants.dispatch_url`). Este documento explica cómo se garantiza que cada orden llegue a su tienda de forma confiable.
+Cuando se crea una orden, la API encola un job de Sidekiq que la envía por HTTP a la tienda de su restaurante (`restaurants.dispatch_url`). Este documento explica cómo se asegura que cada orden llegue a su tienda y qué pasa cuando la tienda falla.
 
 ## Principio: PostgreSQL decide, Sidekiq ejecuta
 
@@ -50,7 +50,7 @@ WHERE id = ?
 
 La misma sentencia devuelve (`RETURNING`) el número de intento que le tocó a este worker, que es el que se registra en la auditoría. Si se leyera después, podría ser el de otro worker que retomó la orden entretanto.
 
-Si no cambia ninguna fila, el job termina sin hacer nada. Puede ser porque la orden todavía no corresponde, porque otro worker la tiene, porque ya terminó o porque se agotaron sus intentos. Como es una sola sentencia, dos workers nunca toman la misma orden al mismo tiempo.
+Si no cambia ninguna fila, el job termina sin hacer nada. Puede ser porque la orden todavía no corresponde, porque otro worker la tiene, porque ya terminó o porque se agotaron sus intentos. Como es una sola sentencia, dos workers no pueden tomar la misma orden mientras su lease está vigente.
 
 **Lease:** el worker tiene la orden hasta `dispatch_lease_expires_at`. Si muere a mitad del envío, cuando la lease vence otro worker puede retomarla con un token nuevo. Eso también cuenta como intento. La lease (60 s por defecto) debe durar al menos el doble del plazo total de la entrega (23 s), para cubrir también la carga de la orden y la escritura del resultado, que puede esperar el bloqueo de la orden; si no, la app no arranca.
 
@@ -63,7 +63,12 @@ Content-Type: application/json
 Idempotency-Key: LCON-000042
 ```
 
-**Plazo total de 23 s.** Los timeouts HTTP (3 s para conectar, 10 s para enviar el cuerpo y 10 s para cada lectura) limitan cada paso, no la solicitud completa: una tienda que envía la respuesta de a pocos bytes podría retener al worker indefinidamente y superar la lease. Por eso la entrega completa tiene además un plazo igual a la suma de los tres (`delivery_deadline_seconds`, definido una sola vez en `config/initializers/dispatch.rb`). Si vence, el intento es `transient` (`deadline exceeded`) y se reintenta como cualquier timeout. El plazo usa `Timeout.timeout` sin una clase de error propia, para que ningún `rescue` dentro de Net::HTTP o Faraday pueda capturar la interrupción. El plazo cubre solo la llamada HTTP; el JSON de la orden se arma antes. Es un trade-off: una respuesta legítima que, sin pasarse en ningún paso, tarde más de 23 s en total también se corta y consume un intento. Si la tienda sí había recibido la orden, el reenvío llega con la misma `Idempotency-Key` y la tienda no la registra dos veces.
+**Plazo total de 23 s.** Los timeouts HTTP (3 s para conectar, 10 s para enviar el cuerpo y 10 s para cada lectura) limitan cada paso, no la solicitud completa: una tienda que envía la respuesta de a pocos bytes podría retener al worker indefinidamente y superar la lease. Por eso la entrega completa tiene además un plazo igual a la suma de los tres (`delivery_deadline_seconds`, definido una sola vez en `config/initializers/dispatch.rb`).
+
+- Si vence, el intento es `transient` (`deadline exceeded`) y se reintenta como cualquier timeout.
+- Cubre solo la llamada HTTP: el JSON de la orden se arma antes, así que el plazo nunca interrumpe una consulta a la base.
+- Usa `Timeout.timeout` sin una clase de error propia, para que ningún `rescue` dentro de Net::HTTP o Faraday pueda capturar la interrupción.
+- Es un trade-off: una respuesta legítima que, sin pasarse en ningún paso, tarde más de 23 s en total también se corta y consume un intento. Si la tienda sí había recibido la orden, el reenvío llega con la misma `Idempotency-Key` y la tienda no la registra dos veces.
 
 El `Idempotency-Key` es el número de la orden. La entrega es **al menos una vez**: si un worker pierde la lease pero su request igual llegó a la tienda, la orden puede llegar dos veces, y la tienda la recibe solo la primera (ver [Tiendas simuladas](simulated_stores.md#deduplicación-atómica)).
 
@@ -73,7 +78,7 @@ El resultado se escribe con `UPDATE ... WHERE id = ? AND dispatch_token = <token
 
 ## Encolado y fallas de Redis
 
-El job se encola **después del commit** de la orden, para que el worker nunca busque una orden que todavía no existe. Si Redis no está disponible en ese momento, la orden ya quedó guardada: la API responde igual `201`, la orden queda `pending` con `next_dispatch_at` vencido y se registra un warning en el log. Un reintento con la misma `Idempotency-Key` responde `200` con esa misma orden.
+El job se encola **después del commit** de la orden, para que el worker no busque una orden que todavía no es visible en la base. Si Redis no está disponible en ese momento, la orden ya quedó guardada: la API responde igual `201`, la orden queda `pending` con `next_dispatch_at` vencido y se registra un warning en el log. Un reintento con la misma `Idempotency-Key` responde `200` con esa misma orden.
 
 Esas órdenes las retoma la [recuperación](#recuperación) cuando los servicios vuelven a estar disponibles.
 
@@ -84,7 +89,7 @@ Los tres lugares que encolan un despacho (la creación de la orden, los reintent
 | Respuesta de la tienda | Resultado |
 |---|---|
 | `2xx` | `success` → la orden queda `dispatched`. |
-| `408`, `425`, `429`, `5xx`, timeout, conexión rechazada | `transient`: la tienda podría aceptarla más tarde. |
+| `408`, `425`, `429`, `5xx`, timeout, plazo total vencido, conexión rechazada, error TLS | `transient`: la tienda podría aceptarla más tarde. |
 | Cualquier otro `4xx` (y `3xx`) | `permanent`: reintentar no cambiaría la respuesta. |
 
 ## Reintentos
@@ -106,7 +111,7 @@ espera = max(base × 2^(intento − 1), Retry-After), con un tope de DISPATCH_RE
 | Espera con base 10 s (por defecto) | 10 s | 20 s | 40 s | 80 s | — `failed` |
 | Espera con base 2 s (`bin/dev` y Docker) | 2 s | 4 s | 8 s | 16 s | — `failed` |
 
-- **`Retry-After`:** si la tienda lo envía, típicamente con un `429` o un `503`, se respeta cuando pide más tiempo que el backoff. Acepta segundos (`120`) o una fecha HTTP. Un valor ilegible o en el pasado se ignora.
+- **`Retry-After`:** si la tienda lo envía, típicamente con un `429` o un `503`, se respeta cuando pide más tiempo que el *backoff*. Acepta segundos (`120`) o una fecha HTTP. Un valor ilegible o en el pasado se ignora.
 - **Tope:** ninguna espera supera `DISPATCH_RETRY_MAX_SECONDS` (300 s), aunque la tienda pida más.
 - Con base 2 s, una tienda caída agota sus 5 intentos tras 30 s de espera (2 + 4 + 8 + 16), y por eso `bin/dev` y Docker usan ese valor; con la base por defecto de 10 s serían 150 s. En la práctica, cada reintento se demora además hasta unos 5 s, que es lo que tarda Sidekiq en revisar sus jobs programados: en una prueba en vivo con Docker, la tienda caída llegó a `failed` en unos 42 s.
 
